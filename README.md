@@ -7,8 +7,9 @@ teams. It reads the repository's own history for context, runs the project's tes
 in a network-isolated sandbox, and drafts a comment only when it has something
 specific to say.
 
-**Status: Phase 0.** The webhook spine is built and tested. There is no review
-intelligence yet. Do not install this on anything you care about.
+**Status: Phase 1.** The webhook spine and the ingest pipeline are built and
+tested. There is no retrieval and no review intelligence yet. Do not install this
+on anything you care about.
 
 ## What it will not do
 
@@ -50,6 +51,60 @@ Redeliveries are handled on the Actions side. GitHub redelivers webhooks and the
 receiver cannot tell, so the delivery row is written first and a `delivery_id` that
 already exists stops the run before it comments on the same pull request twice.
 
+## The corpus
+
+Context comes from the repositories themselves: source and docs at the default
+branch, merged pull requests, the review comments left on them, and issues. The
+review comments are the valuable part, because they are a record of what an
+experienced reviewer thought was worth saying about a specific hunk.
+
+Files are chunked along their own structure rather than into fixed windows. A
+Python file becomes one chunk per top-level definition, a class too large to keep
+whole becomes its methods, and a markdown or reStructuredText file splits at its
+headings. A window that cuts through the middle of a function produces a retrieval
+hit that cannot be read on its own and a citation that points at half a thing.
+
+Storage is split, and the split is a budget decision:
+
+```
+Postgres (Neon, 0.5 GB, 5 GB egress/month)   the index: one narrow row per unit
+Hugging Face dataset repo (private, 100 GB)  the text: sharded gzipped JSONL
+```
+
+Re-ingest is idempotent, and this is measured rather than assumed. Each unit has an
+identity that survives its content changing, and a content hash that covers exactly
+the record written to the dataset repo. A unit whose hash matches does not produce a
+write, and a shard whose bytes match its manifest entry is not uploaded. Running the
+whole pipeline twice writes zero rows and sends zero shards, which the test suite
+asserts end to end against a real Postgres.
+
+The commit sha is deliberately absent from both the identity and the hash. It moves
+on every push without the content moving, and a corpus that rewrote itself on every
+push would spend the whole storage budget saying nothing.
+
+## Mining
+
+```
+mine.yml  ->  python -m pr_lens.jobs.ingest --sink huggingface
+```
+
+Two things about GitHub's rate limits shape the client. The workflow's built-in
+`GITHUB_TOKEN` is 1,000 requests per hour **per repository**, against 5,000 for a
+personal access token or an App installation token; mining as the workflow does not
+fail, it runs at a fifth of the speed and reads as a slow network, so the client
+checks its own budget at startup and refuses to run under it. And the secondary
+limits bite first and cannot be queried, so there is no number to stay under: the
+client keeps concurrency low, backs off on 403 and 429, honours `retry-after`, and
+raises at a ceiling rather than looping.
+
+Source is fetched as the repository tarball, which is one request instead of one
+per file. Everything is cached on disk, content-addressed, and the cache is
+restored and saved by `actions/cache`, so a run killed at the six-hour job limit
+resumes from where it stopped rather than from zero.
+
+The list of repositories to mine is passed in, as a workflow input or the
+`MINING_REPOS` repository variable. It is not stored here.
+
 ## Running it locally
 
 ```
@@ -66,8 +121,19 @@ uv run uvicorn pr_lens.api.main:app --reload
 Tests that need Postgres skip themselves without one:
 
 ```
-docker run -d --name pr-lens-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:16
+docker run -d --name pr-lens-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 \
+  pgvector/pgvector:pg16
 DATABASE_URL=postgresql://postgres:postgres@localhost:55432/postgres uv run pytest
+```
+
+`pgvector/pgvector` rather than plain `postgres`, because the corpus migration
+creates the extension. Neon has it enabled already.
+
+A mining run against the local filesystem, which needs no Hugging Face token:
+
+```
+GH_MINING_TOKEN=... DATABASE_URL=... uv run python -m pr_lens.jobs.ingest \
+  --repo jazzband/pip-tools --sink local --corpus-dir .corpus
 ```
 
 Migrations run from the Actions tab, through the `migrate` workflow. Locally:
@@ -76,8 +142,8 @@ Migrations run from the Actions tab, through the `migrate` workflow. Locally:
 ## Dependencies
 
 `pyproject.toml` is the source of truth. The receiver's dependencies are the
-`[project]` list and nothing else; `asyncpg` sits in the `db` group, used only by
-Actions jobs.
+`[project]` list and nothing else: `asyncpg` sits in the `db` group and
+`huggingface-hub` in the `ingest` group, both used only by Actions jobs.
 
 The host installs from `requirements.txt`, which is generated, not hand-edited. CI
 fails if it drifts from the lockfile. Regenerate it with:
