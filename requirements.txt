@@ -1,0 +1,58 @@
+# Generated. Do not edit by hand.
+#   uv export --no-dev --no-hashes --no-emit-project --format requirements-txt
+#
+# Vercel installs from this file. It is the receiver's dependency closure and
+# nothing else, so asyncpg never reaches the serverless path. ci.yml fails if this
+# drifts from uv.lock.
+annotated-doc==0.0.5
+    # via fastapi
+annotated-types==0.8.0
+    # via pydantic
+anyio==4.15.1
+    # via
+    #   httpx
+    #   starlette
+certifi==2026.7.22
+    # via
+    #   httpcore
+    #   httpx
+fastapi==0.141.1
+    # via pr-lens
+h11==0.16.0
+    # via httpcore
+httpcore==1.0.9
+    # via httpx
+httpx==0.28.1
+    # via pr-lens
+idna==3.19
+    # via
+    #   anyio
+    #   httpx
+pydantic==2.13.5
+    # via
+    #   fastapi
+    #   pydantic-settings
+pydantic-core==2.46.5
+    # via pydantic
+pydantic-settings==2.15.0
+    # via pr-lens
+python-dotenv==1.2.3
+    # via pydantic-settings
+starlette==1.6.0
+    # via fastapi
+typing-extensions==4.16.0
+    # via
+    #   anyio
+    #   fastapi
+    #   pydantic
+    #   pydantic-core
+    #   starlette
+    #   typing-inspection
+typing-inspection==0.4.4
+    # via
+    #   fastapi
+    #   pydantic
+    #   pydantic-settings
+
+# The project itself, so 'pr_lens' is importable from api/index.py.
+.

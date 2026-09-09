@@ -55,3 +55,15 @@ jobs:
       - name: pytest
         run: uv run pytest
 
+      - name: requirements.txt matches the lockfile
+        # Vercel installs from requirements.txt, not from uv.lock. If they drift, the
+        # deployed receiver runs versions nothing here ever tested.
+        run: |
+          set -euo pipefail
+          uv export --no-dev --no-hashes --no-emit-project --format requirements-txt \
+            --no-color 2>/dev/null | grep -vE '^\s*(#|$)' > /tmp/expected.txt
+          grep -vE '^\s*(#|$)|^\.$' requirements.txt > /tmp/actual.txt
+          diff -u /tmp/expected.txt /tmp/actual.txt || {
+            echo "requirements.txt is stale. Regenerate it, see README."
+            exit 1
+          }
