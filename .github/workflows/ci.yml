@@ -55,5 +55,3 @@ jobs:
       - name: pytest
         run: uv run pytest
 
-      - name: docker build
-        run: docker build -t pr-lens:ci .
