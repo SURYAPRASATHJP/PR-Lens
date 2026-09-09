@@ -1,8 +1,8 @@
 name: review
 
-# Started by the Space when a pull request event survives HMAC verification. This is the
-# other half of the Phase 0 gate: without a workflow listening, the dispatch succeeds and
-# nothing anywhere shows that it landed.
+# Started by the receiver once a pull request event has passed HMAC verification. This is
+# where the database lives: the receiver is stateless, so the first thing this job does is
+# write the delivery row.
 on:
   repository_dispatch:
     types: [pr_event]
@@ -11,14 +11,37 @@ permissions:
   contents: read
 
 jobs:
-  echo:
+  review:
     runs-on: ubuntu-latest
     steps:
-      - name: Show the dispatched pull request
-        # Through an env var, never interpolated into the script. client_payload arrives
-        # from the public internet and ${{ }} inside run: is a shell injection.
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - name: Record the delivery
+        id: record
+        # Through env, never interpolated into the script. client_payload arrives from the
+        # public internet and ${{ }} inside a run block is a shell injection.
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CLIENT_PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: uv run python -m pr_lens.jobs.record_delivery
+
+      - name: Review the pull request
+        # GitHub redelivers webhooks, and the receiver holds no state to notice. The row
+        # written above is the guard: a delivery id we have already seen stops here rather
+        # than commenting on the same pull request twice.
+        if: steps.record.outputs.new == 'true'
         env:
           PAYLOAD: ${{ toJSON(github.event.client_payload) }}
         run: |
           echo "Phase 0 stub. Phases 1 to 4 replace this with the real review run."
           echo "$PAYLOAD"
+
+      - name: Skipped as a redelivery
+        if: steps.record.outputs.new != 'true'
+        run: echo "This delivery was already recorded. Nothing to do."

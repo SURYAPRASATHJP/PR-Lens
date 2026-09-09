@@ -1,0 +1,46 @@
+name: migrate
+
+# Run by hand from the Actions tab. Schema changes against the live database are a
+# decision, not something a push should trigger.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "migrate" to confirm running against Neon'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrate
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "migrate" ]; then
+            echo 'Type "migrate" in the confirm box to run this.'
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - name: Apply migrations
+        # Applying an already-applied migration is a no-op, so re-running is safe.
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run python -m pr_lens.db.migrate
