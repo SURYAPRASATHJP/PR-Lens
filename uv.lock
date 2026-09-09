@@ -471,38 +471,42 @@ name = "pr-lens"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "asyncpg" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "pydantic-settings" },
-    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.dev-dependencies]
+db = [
+    { name = "asyncpg" },
+]
 dev = [
+    { name = "asyncpg" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "respx" },
     { name = "ruff" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "asyncpg", specifier = ">=0.30" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic-settings", specifier = ">=2.6" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 
 [package.metadata.requires-dev]
+db = [{ name = "asyncpg", specifier = ">=0.30" }]
 dev = [
+    { name = "asyncpg", specifier = ">=0.30" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "respx", specifier = ">=0.22" },
     { name = "ruff", specifier = ">=0.8" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 
 [[package]]

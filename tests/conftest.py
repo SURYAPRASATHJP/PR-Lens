@@ -8,29 +8,11 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from pr_lens.api.deps import get_dispatcher, get_settings_dep, get_store
-from pr_lens.api.main import WEBHOOK_PATH, create_app
-from pr_lens.models import Delivery
+from pr_lens.api.main import WEBHOOK_PATH, app
 from pr_lens.settings import Settings
 
 WEBHOOK_SECRET = "test-webhook-secret"
-
-
-class FakeStore:
-    def __init__(self) -> None:
-        self.recorded: list[Delivery] = []
-        self.marked: list[tuple[str, str]] = []
-        self._seen: set[str] = set()
-
-    async def record(self, delivery: Delivery) -> bool:
-        if delivery.delivery_id in self._seen:
-            return False
-        self._seen.add(delivery.delivery_id)
-        self.recorded.append(delivery)
-        return True
-
-    async def mark_dispatched(self, delivery_id: str, status: str) -> None:
-        self.marked.append((delivery_id, status))
+DELIVERY_ID = "11111111-2222-3333-4444-555555555555"
 
 
 class FakeDispatcher:
@@ -49,14 +31,8 @@ def settings() -> Settings:
     return Settings(
         gh_webhook_secret=WEBHOOK_SECRET,
         gh_dispatch_token="test-token",
-        database_url="postgresql://unused/unused",
         dispatch_repo="SURYAPRASATHJP/pr-lens",
     )
-
-
-@pytest.fixture
-def store() -> FakeStore:
-    return FakeStore()
 
 
 @pytest.fixture
@@ -65,15 +41,15 @@ def dispatcher() -> FakeDispatcher:
 
 
 @pytest.fixture
-def client(
-    settings: Settings, store: FakeStore, dispatcher: FakeDispatcher
-) -> Iterator[TestClient]:
-    app = create_app(with_lifespan=False)
-    app.dependency_overrides[get_store] = lambda: store
-    app.dependency_overrides[get_dispatcher] = lambda: dispatcher
-    app.dependency_overrides[get_settings_dep] = lambda: settings
+def client(settings: Settings, dispatcher: FakeDispatcher) -> Iterator[TestClient]:
+    # The receiver reads both of these off app.state when they are present, which is how a
+    # test avoids reaching the environment or the network.
+    app.state.settings = settings
+    app.state.dispatcher = dispatcher
     with TestClient(app) as test_client:
         yield test_client
+    del app.state.settings
+    del app.state.dispatcher
 
 
 def sign(body: bytes, secret: str = WEBHOOK_SECRET) -> str:
@@ -103,7 +79,7 @@ def post_webhook(
     body: bytes,
     *,
     event: str = "pull_request",
-    delivery_id: str = "11111111-2222-3333-4444-555555555555",
+    delivery_id: str = DELIVERY_ID,
     signature: str | None = None,
 ) -> Any:
     headers = {

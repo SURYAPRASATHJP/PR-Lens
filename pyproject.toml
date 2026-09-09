@@ -5,11 +5,12 @@ description = "Opt-in GitHub App that leaves line-level review comments on pull 
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
+# The receiver's dependencies, and only those. This list is what gets installed on
+# Vercel, so anything added here ships to the serverless path. Postgres deliberately is
+# not here: the receiver must not be able to open a database connection.
 dependencies = [
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
     "pydantic-settings>=2.6",
-    "asyncpg>=0.30",
     "httpx>=0.28",
 ]
 
@@ -21,12 +22,17 @@ build-backend = "hatchling.build"
 packages = ["src/pr_lens"]
 
 [dependency-groups]
+# Needed by the Actions jobs that write to Neon, never by the receiver.
+db = ["asyncpg>=0.30"]
+
 dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "respx>=0.22",
+    "uvicorn[standard]>=0.32",
+    { include-group = "db" },
 ]
 
 [tool.ruff]
@@ -51,7 +57,11 @@ select = [
 ignore = ["S101"]  # pytest needs assert
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S105", "S106"]  # fixture secrets are not credentials
+# Fixture secrets are not credentials, and a test reading a temp file it just wrote does
+# not need async file IO.
+# Fixture secrets are not credentials; a test reading a temp file it just wrote does not
+# need async file IO; and the one subprocess call runs this interpreter on a literal.
+"tests/*" = ["S105", "S106", "ASYNC240", "S603"]
 
 [tool.mypy]
 strict = true

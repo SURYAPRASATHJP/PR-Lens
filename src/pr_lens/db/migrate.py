@@ -6,7 +6,7 @@ from pathlib import Path
 
 import asyncpg
 
-from pr_lens.db.pool import normalise_dsn
+from pr_lens.db.connection import normalise_dsn
 from pr_lens.logging import configure
 
 logger = logging.getLogger(__name__)

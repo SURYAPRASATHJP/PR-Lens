@@ -1,4 +1,4 @@
-from pr_lens.db.pool import normalise_dsn
+from pr_lens.db.connection import normalise_dsn
 
 
 def test_drops_parameters_asyncpg_rejects() -> None:

@@ -30,18 +30,34 @@ class Delivery:
         )
 
     def as_client_payload(self) -> dict[str, Any]:
-        """GitHub caps client_payload at 10 top-level keys. This uses five.
+        """GitHub caps client_payload at 10 top-level keys. This uses seven.
 
-        Only identifiers travel. The Actions job re-fetches the PR from the API rather
-        than trusting a payload that arrived over the internet.
+        The receiver no longer writes the delivery row, so everything the row needs has to
+        survive the trip. Only identifiers travel: the Actions job re-fetches the pull
+        request from the API rather than trusting a body that arrived over the internet.
         """
         return {
             "delivery_id": self.delivery_id,
+            "event": self.event,
+            "action": self.action,
             "repo_full_name": self.repo_full_name,
             "pr_number": self.pr_number,
             "head_sha": self.head_sha,
             "installation_id": self.installation_id,
         }
+
+    @classmethod
+    def from_client_payload(cls, payload: dict[str, Any]) -> "Delivery":
+        """Rebuild what the receiver sent. Raises KeyError if the dispatch shape drifts."""
+        return cls(
+            delivery_id=str(payload["delivery_id"]),
+            event=str(payload["event"]),
+            action=_as_str(payload.get("action")),
+            repo_full_name=_as_str(payload.get("repo_full_name")),
+            pr_number=_as_int(payload.get("pr_number")),
+            head_sha=_as_str(payload.get("head_sha")),
+            installation_id=_as_int(payload.get("installation_id")),
+        )
 
 
 def delivery_from_webhook(delivery_id: str, event: str, payload: dict[str, Any]) -> Delivery:

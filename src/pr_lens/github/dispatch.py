@@ -19,6 +19,9 @@ class GitHubDispatcher:
     token. repository_dispatch needs Contents: write on the target, and the App is
     deliberately Contents: read-only so that "never pushes to your repo" is true at the
     token level rather than only in our code. See ADR 0002.
+
+    This is the receiver's only outbound call, and the only reason it needs a secret
+    beyond the webhook secret.
     """
 
     def __init__(self, client: httpx.AsyncClient, repo: str, token: str, event_type: str) -> None:
@@ -48,8 +51,8 @@ class GitHubDispatcher:
             raise DispatchError(
                 f"GitHub returned {response.status_code} for dispatch to {self._repo}. "
                 "GH_DISPATCH_TOKEN is expired, revoked, or missing Contents: write on "
-                "that repo. Fine-grained PATs expire; regenerate it and update the Space "
-                "secret."
+                "that repo. Fine-grained PATs expire; regenerate it and update the "
+                "receiver's environment variables."
             )
         if response.status_code != httpx.codes.NO_CONTENT:
             raise DispatchError(
