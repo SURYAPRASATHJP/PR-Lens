@@ -19,9 +19,12 @@ jobs:
 
     # A throwaway container, not Neon. Neon free is 0.5 GB with a 100 CU-hour budget and
     # every CI run against it spends the production database's quota.
+    #
+    # pgvector rather than plain postgres, because migration 0002 creates the extension
+    # and the suite runs the migrations. Neon has it enabled already.
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: postgres
         ports:
