@@ -25,6 +25,10 @@ packages = ["src/pr_lens"]
 # Needed by the Actions jobs that write to Neon, never by the receiver.
 db = ["asyncpg>=0.30"]
 
+# The mining job's extras. huggingface-hub is here rather than in the project's
+# dependencies so the receiver's closure stays three packages wide.
+ingest = ["huggingface-hub>=0.26"]
+
 dev = [
     "ruff>=0.8",
     "mypy>=1.13",
@@ -33,6 +37,7 @@ dev = [
     "respx>=0.22",
     "uvicorn[standard]>=0.32",
     { include-group = "db" },
+    { include-group = "ingest" },
 ]
 
 [tool.ruff]
@@ -70,7 +75,7 @@ files = ["src", "tests"]
 plugins = []
 
 [[tool.mypy.overrides]]
-module = ["asyncpg.*"]
+module = ["asyncpg.*", "huggingface_hub.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
