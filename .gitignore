@@ -23,3 +23,8 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# The mining job's working directories. The corpus lives in the private dataset repo and
+# the http cache is restored from actions/cache; neither belongs in git.
+.cache/
+.corpus/

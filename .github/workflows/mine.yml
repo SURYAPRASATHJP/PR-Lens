@@ -1,0 +1,85 @@
+name: mine
+
+# The overnight corpus run. Manual, because it is long and it spends a rate-limit budget
+# that the review path also draws on.
+#
+# Actions standard runners are free and unlimited on a public repo, but a job is killed
+# at six hours and the mining set does not fit in one. So this is built to be run more
+# than once: the HTTP cache is restored at the start and saved at the end, a repo already
+# mined replays from disk in seconds, and --time-budget stops the run with time left to
+# save the cache rather than being killed with it half written.
+on:
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: >-
+          Comma-separated owner/name list. Leave empty to use the MINING_REPOS repository
+          variable. The mining set lives outside this repository, so it is passed in.
+        required: false
+        default: ""
+      sink:
+        description: Where the corpus text goes
+        type: choice
+        options: [huggingface, local]
+        default: huggingface
+      time_budget:
+        description: Seconds before the run stops cleanly and saves its cache
+        required: false
+        default: "18000"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two mining runs at once would race on the same shards and double the request rate
+  # against secondary limits that cannot be queried.
+  group: mine
+  cancel-in-progress: false
+
+jobs:
+  mine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen --group db --group ingest
+
+      # A rolling key, because a cache entry is immutable once saved. restore-keys picks
+      # up the most recent previous run, so a killed run resumes from where it stopped.
+      - name: Restore the http cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/github
+          key: ingest-cache-${{ github.run_id }}
+          restore-keys: ingest-cache-
+
+      - name: Mine
+        env:
+          # Never the workflow's GITHUB_TOKEN: 1,000 requests/hour per repository against
+          # 5,000 for a PAT. The client asserts this at startup and refuses to run slow.
+          GH_MINING_TOKEN: ${{ secrets.GH_MINING_TOKEN }}
+          GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MINING_REPOS: ${{ inputs.repos || vars.MINING_REPOS }}
+          SINK: ${{ inputs.sink }}
+          TIME_BUDGET: ${{ inputs.time_budget }}
+        run: |
+          uv run python -m pr_lens.jobs.ingest \
+            --sink "$SINK" \
+            --time-budget "$TIME_BUDGET"
+
+      # always(), so a run that hit its time budget or died on one repo still saves the
+      # work it did. Without this the next run starts from zero.
+      - name: Save the http cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/github
+          key: ingest-cache-${{ github.run_id }}
