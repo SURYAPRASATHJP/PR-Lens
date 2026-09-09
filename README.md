@@ -29,18 +29,26 @@ because they have not been measured yet, not because they are flattering.
 
 ```
 pull request event
-  -> Hugging Face Space (FastAPI in Docker)
+  -> receiver, a serverless Python function
        verify HMAC SHA-256, else 401
-       record the delivery in Postgres, unique on GitHub's delivery id
        fire repository_dispatch
        return 202
   -> GitHub Actions
-       retrieval, sandboxed test run, drafting, posting
+       write the delivery row, then retrieval, sandboxed tests, drafting, posting
 ```
 
-The Space does no thinking. It verifies, records, dispatches and returns, well
-inside GitHub's ten second webhook timeout. Everything expensive runs as an Actions
-job on this public repo, where standard runners are free and unlimited.
+The receiver is about forty lines and holds no state. It opens no database
+connection, which is why `asyncpg` is not among its dependencies and why a test
+asserts that importing it does not pull the driver in. Everything expensive runs as
+an Actions job on this public repo, where standard runners are free and unlimited.
+
+That split is deliberate. The receiver is the part a host can take away, and three
+free tiers moved under this project on its first day. Moving it should cost an
+afternoon, so nothing host-specific lives outside `api/index.py` and `vercel.json`.
+
+Redeliveries are handled on the Actions side. GitHub redelivers webhooks and the
+receiver cannot tell, so the delivery row is written first and a `delivery_id` that
+already exists stops the run before it comments on the same pull request twice.
 
 ## Running it locally
 
@@ -52,19 +60,38 @@ uv run pytest
 uv run uvicorn pr_lens.api.main:app --reload
 ```
 
-Database tests need a Postgres to talk to and skip without one:
+`api/index.py` is the deployed entry point and mounts the same app, so
+`uv run uvicorn api.index:app` serves exactly what the deployment serves.
+
+Tests that need Postgres skip themselves without one:
 
 ```
 docker run -d --name pr-lens-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:16
 DATABASE_URL=postgresql://postgres:postgres@localhost:55432/postgres uv run pytest
 ```
 
-Apply migrations with `uv run python -m pr_lens.db.migrate`.
+Migrations run from the Actions tab, through the `migrate` workflow. Locally:
+`DATABASE_URL=... uv run python -m pr_lens.db.migrate`.
+
+## Dependencies
+
+`pyproject.toml` is the source of truth. The receiver's dependencies are the
+`[project]` list and nothing else; `asyncpg` sits in the `db` group, used only by
+Actions jobs.
+
+The host installs from `requirements.txt`, which is generated, not hand-edited. CI
+fails if it drifts from the lockfile. Regenerate it with:
+
+```
+uv export --no-dev --no-hashes --no-emit-project --format requirements-txt
+```
+
+keeping the trailing `.` line that installs the project itself.
 
 ## Configuration
 
 Every value comes from the environment. See `.env.example` for the full list and
-where each one has to be stored.
+where each one belongs.
 
 ## Licence
 
