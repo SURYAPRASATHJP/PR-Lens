@@ -35,8 +35,9 @@ def test_repos_come_from_the_command_line_first() -> None:
 
 
 def test_the_mining_set_file_is_read_in_its_own_shape(tmp_path: Path) -> None:
-    # notes/mining-repos.json is an object with a repos key holding verified stats, and
-    # it lives outside this repository, so the job has to accept it as given.
+    # The mining set is an object with a repos key holding per-repo verified stats. It
+    # is maintained outside this repository, so the job accepts that shape as given
+    # rather than asking for it to be reshaped first.
     path = tmp_path / "mining-repos.json"
     path.write_text(json.dumps(MINING_SET), encoding="utf-8")
 
