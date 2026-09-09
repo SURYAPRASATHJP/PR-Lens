@@ -1,0 +1,24 @@
+name: review
+
+# Started by the Space when a pull request event survives HMAC verification. This is the
+# other half of the Phase 0 gate: without a workflow listening, the dispatch succeeds and
+# nothing anywhere shows that it landed.
+on:
+  repository_dispatch:
+    types: [pr_event]
+
+permissions:
+  contents: read
+
+jobs:
+  echo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show the dispatched pull request
+        # Through an env var, never interpolated into the script. client_payload arrives
+        # from the public internet and ${{ }} inside run: is a shell injection.
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: |
+          echo "Phase 0 stub. Phases 1 to 4 replace this with the real review run."
+          echo "$PAYLOAD"

@@ -1,0 +1,25 @@
+# AI working files must never enter this repo
+CLAUDE.md
+PROGRESS.md
+PLAN.md
+PARKING-LOT.md
+.claude/
+notes/
+
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
