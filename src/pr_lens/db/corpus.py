@@ -170,3 +170,20 @@ def _columns(batch: Sequence[CorpusUnit], placement: Mapping[str, str]) -> list[
         [placement.get(str(r["unit_id"]), "") for r in rows],
         [json.dumps(r["metadata"], sort_keys=True) for r in rows],
     ]
+
+
+# One round trip for a whole candidate list. The obvious version, one lookup per retrieved
+# unit, is thirty round trips to a database that may be waking from scale-to-zero, and it
+# is the N+1 that makes a fast retriever look slow.
+RESOLVE_UNITS = """
+select unit_id, repo, kind, path, symbol, start_line, end_line, shard
+from corpus_units
+where unit_id = any($1::text[])
+"""
+
+
+async def resolve_units(conn: asyncpg.Connection, unit_ids: Sequence[str]) -> list[asyncpg.Record]:
+    """Where each retrieved unit lives, in retrieval order, for citing and fetching text."""
+    rows = await conn.fetch(RESOLVE_UNITS, list(unit_ids))
+    by_id = {row["unit_id"]: row for row in rows}
+    return [by_id[unit_id] for unit_id in unit_ids if unit_id in by_id]
