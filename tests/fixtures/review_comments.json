@@ -1,0 +1,166 @@
+{
+  "about": "Review comment payloads the pair miner has to get right. Real cases join this file the day they turn up in the mining data, with where they were found.",
+  "comments": [
+    {
+      "case": "a thread root on an added line, the ordinary pair",
+      "expect": "pair",
+      "payload": {
+        "id": 3904066654,
+        "in_reply_to_id": null,
+        "path": "uv.lock",
+        "diff_hunk": "@@ -517,7 +517,7 @@ name = \"exceptiongroup\"\n version = \"1.3.1\"\n source = { registry = \"https://pypi.org/simple\" }\n dependencies = [\n-    { name = \"typing-extensions\", marker = \"python_full_version < '3.13'\" },\n+    { name = \"typing-extensions\" },",
+        "body": "Hm I wonder why this marker was dropped here, is that intentional? It changes resolution on 3.13.",
+        "user": {"login": "svlandeg", "type": "User"},
+        "pull_request_url": "https://api.github.com/repos/fastapi/typer/pulls/1400",
+        "created_at": "2026-08-20T10:00:00Z",
+        "html_url": "https://github.com/fastapi/typer/pull/1400#discussion_r3904066654",
+        "side": "RIGHT",
+        "line": 520
+      }
+    },
+    {
+      "case": "a reply to that root, found 12 Sep 2026 in fastapi/typer",
+      "expect": "reply",
+      "payload": {
+        "id": 3914839963,
+        "in_reply_to_id": 3904066654,
+        "path": "uv.lock",
+        "diff_hunk": "@@ -517,7 +517,7 @@ name = \"exceptiongroup\"\n dependencies = [\n-    { name = \"typing-extensions\", marker = \"python_full_version < '3.13'\" },\n+    { name = \"typing-extensions\" },",
+        "body": "I checked this - newer versions of uv remove the markers that are always true.",
+        "user": {"login": "YuriiMotov", "type": "User"},
+        "pull_request_url": "https://api.github.com/repos/fastapi/typer/pulls/1400"
+      }
+    },
+    {
+      "case": "an automated reviewer posting as a User, missed by every name rule. Found 12 Sep 2026 in fastapi/typer",
+      "expect": "bot",
+      "payload": {
+        "id": 3723047297,
+        "in_reply_to_id": null,
+        "path": "typer/_click/types.py",
+        "diff_hunk": "@@ -539,7 +539,10 @@ def convert(\n                 if ctx is not None:\n-                    ctx.call_on_close(lf.close_intelligently)\n+                    if self.atomic:",
+        "body": "**Worth a look** · design · `typer/_click/types.py:542` · No behavior risk: api_signature\n\n**What:** No behavior risk",
+        "user": {"login": "kramlipi", "type": "User"},
+        "pull_request_url": "https://api.github.com/repos/fastapi/typer/pulls/1390"
+      }
+    },
+    {
+      "case": "an all-addition hunk on a new file, whose before-state is empty",
+      "expect": "empty_before_state",
+      "payload": {
+        "id": 900001,
+        "in_reply_to_id": null,
+        "path": "src/new_module.py",
+        "diff_hunk": "@@ -0,0 +1,4 @@\n+import os\n+\n+def helper():\n+    return os.getcwd()",
+        "body": "This duplicates pathlib.Path.cwd(), which the rest of the package already uses everywhere.",
+        "user": {"login": "reviewer", "type": "User"},
+        "pull_request_url": "https://api.github.com/repos/octocat/hello-world/pulls/5"
+      }
+    },
+    {
+      "case": "a file-level comment with no diff_hunk",
+      "expect": "no_path_or_hunk",
+      "payload": {
+        "id": 900002,
+        "in_reply_to_id": null,
+        "path": "README.md",
+        "diff_hunk": "",
+        "subject_type": "file",
+        "body": "The whole README section on installation is out of date since the switch to uv.",
+        "user": {"login": "reviewer", "type": "User"},
+        "pull_request_url": "https://api.github.com/repos/octocat/hello-world/pulls/5"
+      }
+    },
+    {
+      "case": "a comment with no path at all",
+      "expect": "no_path_or_hunk",
+      "payload": {
+        "id": 900003,
+        "in_reply_to_id": null,
+        "path": null,
+        "diff_hunk": "@@ -1,2 +1,2 @@\n-a\n+b",
+        "body": "This is long enough to survive the nit filter but has nothing to anchor to.",
+        "user": {"login": "reviewer", "type": "User"},
+        "pull_request_url": "https://api.github.com/repos/octocat/hello-world/pulls/5"
+      }
+    },
+    {
+      "case": "a [bot] account",
+      "expect": "bot",
+      "payload": {
+        "id": 900004,
+        "in_reply_to_id": null,
+        "path": "setup.py",
+        "diff_hunk": "@@ -1,2 +1,2 @@\n-x = 1\n+x = 2",
+        "body": "Coverage dropped by 0.42% on this line compared to the base branch, please add a test.",
+        "user": {"login": "codecov[bot]", "type": "Bot"},
+        "pull_request_url": "https://api.github.com/repos/octocat/hello-world/pulls/5"
+      }
+    },
+    {
+      "case": "a deleted account, which the API returns with no user",
+      "expect": "bot",
+      "payload": {
+        "id": 900005,
+        "in_reply_to_id": null,
+        "path": "setup.py",
+        "diff_hunk": "@@ -1,2 +1,2 @@\n-x = 1\n+x = 2",
+        "body": "This constant should come from the settings module rather than being hardcoded.",
+        "user": null,
+        "pull_request_url": "https://api.github.com/repos/octocat/hello-world/pulls/5"
+      }
+    },
+    {
+      "case": "an acknowledgement padded past the length rule",
+      "expect": "acknowledgement",
+      "payload": {
+        "id": 900006,
+        "in_reply_to_id": null,
+        "path": "setup.py",
+        "diff_hunk": "@@ -1,2 +1,2 @@\n-x = 1\n+x = 2",
+        "body": "LGTM!! Thanks a lot for doing this :)",
+        "user": {"login": "reviewer", "type": "User"},
+        "pull_request_url": "https://api.github.com/repos/octocat/hello-world/pulls/5"
+      }
+    },
+    {
+      "case": "an emoji-only body",
+      "expect": "emoji_only",
+      "payload": {
+        "id": 900007,
+        "in_reply_to_id": null,
+        "path": "setup.py",
+        "diff_hunk": "@@ -1,2 +1,2 @@\n-x = 1\n+x = 2",
+        "body": "🎉🎉🚀",
+        "user": {"login": "reviewer", "type": "User"},
+        "pull_request_url": "https://api.github.com/repos/octocat/hello-world/pulls/5"
+      }
+    },
+    {
+      "case": "a unicode-heavy body that is substantive",
+      "expect": "pair",
+      "payload": {
+        "id": 900008,
+        "in_reply_to_id": null,
+        "path": "src/i18n.py",
+        "diff_hunk": "@@ -10,3 +10,3 @@ def greet(name):\n     prefix = 'こんにちは'\n-    return prefix + name\n+    return f'{prefix} {name}'",
+        "body": "この変更で全角スペースが半角になります。既存のスナップショットテストが壊れるので、tests/test_i18n.py も更新が必要です。",
+        "user": {"login": "reviewer", "type": "User"},
+        "pull_request_url": "https://api.github.com/repos/octocat/hello-world/pulls/6"
+      }
+    },
+    {
+      "case": "a body that quotes its own hunk, which would leak into the body-only gold",
+      "expect": "body_quotes_hunk",
+      "payload": {
+        "id": 900009,
+        "in_reply_to_id": null,
+        "path": "setup.py",
+        "diff_hunk": "@@ -1,2 +1,2 @@\n-VERSION = '1.0'\n+VERSION = '2.0'",
+        "body": "Why bump straight to 2.0? The old line was\n\nVERSION = '1.0'\n\nand nothing here is breaking.",
+        "user": {"login": "reviewer", "type": "User"},
+        "pull_request_url": "https://api.github.com/repos/octocat/hello-world/pulls/5"
+      }
+    }
+  ]
+}
