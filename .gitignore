@@ -13,6 +13,9 @@ notes/
 *.pem
 *.key
 
+# macOS Finder metadata
+.DS_Store
+
 # python
 __pycache__/
 *.py[cod]
