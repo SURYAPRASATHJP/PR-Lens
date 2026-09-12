@@ -54,9 +54,16 @@ create extension if not exists vector;
 -- model is a truncate rather than a schema migration on the table retrieval joins to.
 --
 -- 384 dimensions fits bge-small-en-v1.5 and all-MiniLM-L6-v2, both of which run free on
--- an Actions runner. Watch the row budget: 384 floats is about 1.5 kB, so 200k chunks is
--- 300 MB of a 500 MB database before the index. If it gets close, the vectors move to a
--- FAISS index in the dataset repo and this table keeps only what is queried live.
+-- an Actions runner.
+--
+-- Settled 12 Sep 2026, with the corpus measured rather than estimated: this table holds
+-- vectors only for repos the App is installed on, never the mining set. At 153,758 units,
+-- heap plus key plus an HNSW index at m=16 is 521 MB at 384 dims and 993 MB at 768,
+-- against 500 MB for the whole project, and reading them back per Actions run would spend
+-- the 5 GB monthly egress cap in about 37 runs. The mining set's vectors live in the
+-- private dataset repo and are searched exactly, in memory, on the runner. One installed
+-- repo is about 5,700 units, 19 MB at 384 dims, so ten installs fit easily. If the
+-- long-context model wins the Phase 2 table, 0003 moves this column to vector(768).
 create table if not exists corpus_embeddings (
     unit_id   text primary key references corpus_units (unit_id) on delete cascade,
     model     text        not null,

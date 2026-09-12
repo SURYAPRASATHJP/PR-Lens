@@ -7,9 +7,10 @@ teams. It reads the repository's own history for context, runs the project's tes
 in a network-isolated sandbox, and drafts a comment only when it has something
 specific to say.
 
-**Status: Phase 1.** The webhook spine and the ingest pipeline are built and
-tested. There is no retrieval and no review intelligence yet. Do not install this
-on anything you care about.
+**Status: Phase 2.** The webhook spine, the ingest pipeline and the retrieval
+stack are built and tested. The recall table that measures retrieval has not had
+its first run on the live corpus yet, and there is no review intelligence. Do not
+install this on anything you care about.
 
 ## What it will not do
 
@@ -103,7 +104,49 @@ restored and saved by `actions/cache`, so a run killed at the six-hour job limit
 resumes from where it stopped rather than from zero.
 
 The list of repositories to mine is passed in, as a workflow input or the
-`MINING_REPOS` repository variable. It is not stored here.
+`MINING_REPOS` repository variable. Which of those repositories evaluation may look
+at is not a runtime choice: the split lives in `src/pr_lens/eval/split.py`.
+
+## Retrieval, and the recall table
+
+```
+retrieval.yml  ->  pairs  ->  embed (matrix)  ->  first stage  ->  rerank (matrix)  ->  table
+                   anchor embed (matrix)  ->  anchor score
+```
+
+Dense retrieval with two embedding models, BM25 with a tokenizer that splits
+identifiers into their parts, reciprocal rank fusion of the two, and a cross-encoder
+over the top 30. All of it runs on the Actions runner. No hosted embedding API is a
+permanent free tier, and running the models here means anyone who clones the repo
+can rebuild every number without an account.
+
+The point of the phase is not the pipeline but the table that measures it, generated
+here rather than quoted from a paper:
+
+- first-stage recall at 1, 5, 10, 20 and 50 for dense, BM25 and fusion separately,
+  so fusion has to earn its place
+- the truncation price: a 512-token model against a long-context one on the same
+  chunks and queries, with the share of units each one cuts
+- the reranker plateau: recall against how many candidates the cross-encoder reads
+- post-filter recall collapse: the same filtered question answered by searching only
+  the rows the filter allows, and by filtering the top C of an unfiltered search,
+  which is what an approximate index with a WHERE clause does
+- latency, including the first Neon query of a run, which on a free tier that scales
+  to zero is the honest number
+
+Search is exact, a flat matrix product over every row. An approximate index carries
+its own recall loss, and a table meant to measure first-stage recall would then
+measure two things and credit both to the embedding model. A test holds this.
+
+The query set is built from real review comments on the 18 tune repositories and
+frozen before anything is measured on it. How it is built, and where it is weak, is
+in [docs/eval/phase-2-query-set.md](docs/eval/phase-2-query-set.md). A second run,
+on public data, reproduces a published score so that a weak number can be told
+apart from a broken harness.
+
+The vectors live in the private dataset repo, not in Neon. The tune corpus at 768
+dimensions is several hundred megabytes against a 0.5 GB database and a 5 GB monthly
+egress cap. `corpus_embeddings` is for the repositories the App is installed on.
 
 ## Running it locally
 
@@ -113,6 +156,13 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy .
 uv run pytest
 uv run uvicorn pr_lens.api.main:app --reload
+```
+
+Any Phase 2 step runs against a local corpus directory with `--sink local`:
+
+```
+uv run python -m pr_lens.jobs.embed --target corpus --model bge-small --repo encode/httpx
+uv run python -m pr_lens.jobs.recall first-stage
 ```
 
 `api/index.py` is the deployed entry point and mounts the same app, so
@@ -142,8 +192,11 @@ Migrations run from the Actions tab, through the `migrate` workflow. Locally:
 ## Dependencies
 
 `pyproject.toml` is the source of truth. The receiver's dependencies are the
-`[project]` list and nothing else: `asyncpg` sits in the `db` group and
-`huggingface-hub` in the `ingest` group, both used only by Actions jobs.
+`[project]` list and nothing else: `asyncpg` sits in the `db` group,
+`huggingface-hub` in the `ingest` group, and the models in the `retrieval` group,
+all used only by Actions jobs. On Linux `torch` comes from the CPU wheel index,
+because the default wheel downloads gigabytes of GPU libraries to a runner that has
+no GPU.
 
 The host installs from `requirements.txt`, which is generated, not hand-edited. CI
 fails if it drifts from the lockfile. Regenerate it with:
