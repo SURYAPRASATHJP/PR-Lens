@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from pr_lens.jobs.plan import MATRICES
+
 WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 
 
@@ -34,3 +36,17 @@ def test_review_runs_once_per_pull_request_and_the_newest_wins() -> None:
     # Not the delivery id, which differs per push and would put every run in its own group.
     assert "delivery_id" not in group["key"]
     assert re.search(r"^  cancel-in-progress: true\s*$", text, re.MULTILINE)
+
+
+def test_every_phase_2_matrix_fits_in_one_workflow_run() -> None:
+    """GitHub refuses a matrix of more than 256 jobs. Better to fail here than at dispatch."""
+    for build in MATRICES.values():
+        assert 0 < len(build()) <= 256
+
+
+def test_no_workflow_caches_the_private_corpus() -> None:
+    """The hub cache holds whatever the job downloaded, private corpus shards included, and
+    caches on a public repo can be restored by pull request workflows. Cache models by name."""
+    for path in WORKFLOWS.glob("*.yml"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            assert not re.search(r"\.cache/huggingface/hub/?\s*$", line), f"{path.name}: {line}"

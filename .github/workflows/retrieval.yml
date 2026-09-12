@@ -1,0 +1,280 @@
+name: retrieval
+
+# The Phase 2 recall table, end to end, on the live corpus. Manual, because the full run is
+# a few hundred runner-hours of CPU spread across matrix jobs. Actions standard runners are
+# free and unlimited on a public repo, and twenty run at once on a free account.
+#
+# Every step writes its result to the private dataset repo and skips work whose inputs have
+# not changed, so a failed or cancelled run is resumed by running it again, and one stage
+# can be re-run on its own. The matrices come from pr_lens.jobs.plan, which is also what the
+# recall job reads when it reassembles the parts, so the two cannot disagree.
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: >-
+          all runs everything. pairs freezes the query set once. embed fans out the corpus
+          and query vectors. recall runs first stage, rerank and table. anchor is the
+          public CoIR run.
+        type: choice
+        options: [all, pairs, embed, recall, anchor]
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two runs at once would race on the same part files in the dataset repo. Queue instead.
+  group: retrieval
+  cancel-in-progress: false
+
+env:
+  PAIRS_VERSION: v1
+  HF_HUB_DISABLE_PROGRESS_BARS: "1"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      embed: ${{ steps.plan.outputs.embed }}
+      rerank: ${{ steps.plan.outputs.rerank }}
+      anchor: ${{ steps.plan.outputs.anchor }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen --no-dev
+      - id: plan
+        run: |
+          {
+            echo "embed=$(uv run --no-sync python -m pr_lens.jobs.plan embed)"
+            echo "rerank=$(uv run --no-sync python -m pr_lens.jobs.plan rerank)"
+            echo "anchor=$(uv run --no-sync python -m pr_lens.jobs.plan anchor)"
+          } >> "$GITHUB_OUTPUT"
+
+  pairs:
+    needs: plan
+    if: inputs.stage == 'all' || inputs.stage == 'pairs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --no-dev --group ingest --group retrieval
+
+      # The Phase 1 mining cache answers the review-comment listings, and restoring it also
+      # counts as a use, which keeps it from expiring.
+      - uses: actions/cache/restore@v4
+        with:
+          path: .cache/github
+          key: ingest-cache-${{ github.run_id }}
+          restore-keys: ingest-cache-
+
+      - name: Freeze the query set
+        env:
+          # Never the workflow's GITHUB_TOKEN, which is capped per repository.
+          GH_MINING_TOKEN: ${{ secrets.GH_MINING_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: uv run --no-sync python -m pr_lens.jobs.pairs --version "$PAIRS_VERSION" --sink huggingface
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .cache/github
+          key: ingest-cache-${{ github.run_id }}
+
+  embed:
+    needs: [plan, pairs]
+    if: >-
+      !failure() && !cancelled() && (inputs.stage == 'all' || inputs.stage == 'embed')
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJSON(needs.plan.outputs.embed) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --no-dev --group ingest --group retrieval
+      # The model weights only, named. Never the whole hub cache, which also holds the
+      # private corpus shards this job downloaded, and caches on a public repo can be
+      # restored by pull request workflows.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5
+            ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-modernbert-base
+            ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-reranker-modernbert-base
+          key: hf-models-${{ hashFiles('src/pr_lens/retrieval/*.py') }}
+      - name: Embed ${{ matrix.target }} ${{ matrix.model }} ${{ matrix.repo }} ${{ matrix.part }}/${{ matrix.parts }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TARGET: ${{ matrix.target }}
+          MODEL: ${{ matrix.model }}
+          REPO: ${{ matrix.repo }}
+          PART: ${{ matrix.part }}
+          PARTS: ${{ matrix.parts }}
+        run: |
+          set -euo pipefail
+          args=(--target "$TARGET" --model "$MODEL" --part "$PART" --parts "$PARTS" --sink huggingface)
+          if [ "$TARGET" = corpus ]; then args+=(--repo "$REPO"); else args+=(--version "$PAIRS_VERSION"); fi
+          uv run --no-sync python -m pr_lens.jobs.embed "${args[@]}"
+
+  first-stage:
+    needs: [plan, embed]
+    if: >-
+      !failure() && !cancelled() && (inputs.stage == 'all' || inputs.stage == 'recall')
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --no-dev --group db --group ingest --group retrieval
+      # The model weights only, named. Never the whole hub cache, which also holds the
+      # private corpus shards this job downloaded, and caches on a public repo can be
+      # restored by pull request workflows.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5
+            ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-modernbert-base
+            ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-reranker-modernbert-base
+          key: hf-models-${{ hashFiles('src/pr_lens/retrieval/*.py') }}
+      - name: First stage, filters and latency
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # Only for the cold-start and lookup latency rows. The vectors never go to Neon.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: uv run --no-sync python -m pr_lens.jobs.recall first-stage --version "$PAIRS_VERSION" --sink huggingface
+
+  rerank:
+    needs: [plan, first-stage]
+    if: >-
+      !failure() && !cancelled() && (inputs.stage == 'all' || inputs.stage == 'recall')
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJSON(needs.plan.outputs.rerank) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --no-dev --group ingest --group retrieval
+      # The model weights only, named. Never the whole hub cache, which also holds the
+      # private corpus shards this job downloaded, and caches on a public repo can be
+      # restored by pull request workflows.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5
+            ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-modernbert-base
+            ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-reranker-modernbert-base
+          key: hf-models-${{ hashFiles('src/pr_lens/retrieval/*.py') }}
+      - name: Rerank shard ${{ matrix.shard }} of ${{ matrix.shards }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
+        run: >-
+          uv run --no-sync python -m pr_lens.jobs.recall rerank --version "$PAIRS_VERSION"
+          --shard "$SHARD" --shards "$SHARDS" --sink huggingface
+
+  table:
+    needs: [plan, rerank]
+    if: >-
+      !failure() && !cancelled() && (inputs.stage == 'all' || inputs.stage == 'recall')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --no-dev --group ingest --group retrieval
+      - name: The recall table
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SHARDS: ${{ fromJSON(needs.plan.outputs.rerank).include[0].shards }}
+        run: >-
+          uv run --no-sync python -m pr_lens.jobs.recall table --version "$PAIRS_VERSION"
+          --shards "$SHARDS" --sink huggingface | tee recall-table.md
+      # A few kilobytes of markdown, well inside the 500 MB artifact allowance. The vectors
+      # and the result JSON stay in the dataset repo.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recall-table
+          path: recall-table.md
+
+  anchor-embed:
+    needs: plan
+    if: inputs.stage == 'all' || inputs.stage == 'anchor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJSON(needs.plan.outputs.anchor) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --no-dev --group ingest --group retrieval
+      # The model weights only, named. Never the whole hub cache, which also holds the
+      # private corpus shards this job downloaded, and caches on a public repo can be
+      # restored by pull request workflows.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5
+            ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-modernbert-base
+            ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-reranker-modernbert-base
+          key: hf-models-${{ hashFiles('src/pr_lens/retrieval/*.py') }}
+      - name: Embed anchor part ${{ matrix.part }} of ${{ matrix.parts }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          PART: ${{ matrix.part }}
+          PARTS: ${{ matrix.parts }}
+        run: >-
+          uv run --no-sync python -m pr_lens.jobs.anchor embed --part "$PART" --parts "$PARTS"
+          --sink huggingface
+
+  anchor-score:
+    needs: [plan, anchor-embed]
+    if: >-
+      !failure() && !cancelled() && (inputs.stage == 'all' || inputs.stage == 'anchor')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --no-dev --group ingest --group retrieval
+      # The model weights only, named. Never the whole hub cache, which also holds the
+      # private corpus shards this job downloaded, and caches on a public repo can be
+      # restored by pull request workflows.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5
+            ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-modernbert-base
+            ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-reranker-modernbert-base
+          key: hf-models-${{ hashFiles('src/pr_lens/retrieval/*.py') }}
+      - name: Score the anchor
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: uv run --no-sync python -m pr_lens.jobs.anchor score --sink huggingface | tee anchor.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anchor
+          path: anchor.md
