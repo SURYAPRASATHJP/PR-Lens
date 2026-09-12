@@ -169,6 +169,8 @@ def test_the_three_steps_produce_a_complete_table(store: LocalSink) -> None:
     ):
         assert heading in markdown
     assert "Not computed yet" not in markdown
+    assert markdown.count("Does fusion earn its place?") == 1
+    assert "gte-modernbert: " in markdown.split("Does fusion earn its place?")[1]
     assert (Path(store.root) / "eval/results/test/recall-table.md").read_text() == markdown
 
     # The body-only rows cannot be string matching, and the with-hunk rows are: the gold

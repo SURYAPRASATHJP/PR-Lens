@@ -65,7 +65,33 @@ def _first_stage(result: dict[str, Any]) -> str:
     for variant in VARIANT_NAMES:
         for row in _rows(result, "body_only", variant):
             lines.append(_recall_line(VARIANT_NAMES[variant], _retriever(row), row))
+    lines += ["", "Does fusion earn its place? RRF against the better of its two inputs, @10:", ""]
+    lines += [_fusion_verdict(result, variant) for variant in VARIANT_NAMES]
     return "\n".join(lines)
+
+
+def _fusion_verdict(result: dict[str, Any], variant: str) -> str:
+    """Said in words, because the rule is to keep the simpler stack when fusion loses."""
+    rows = _rows(result, "body_only", variant)
+    bm25 = next(r["recall"]["10"] for r in rows if r["retriever"] == "bm25")
+    verdicts = []
+    for rrf in (r for r in rows if r["retriever"] == "rrf"):
+        dense = next(
+            r["recall"]["10"]
+            for r in rows
+            if r["retriever"] == "dense" and r["model"] == rrf["model"]
+        )
+        best = max(dense, bm25)
+        gap = rrf["recall"]["10"] - best
+        margin = interval(best, rrf["n"])
+        if gap > margin:
+            verdict = f"earns it, {gap:+.3f} over the better input"
+        elif gap < -margin:
+            verdict = f"loses, {gap:+.3f}; keep the simpler stack"
+        else:
+            verdict = f"no clear gain, {gap:+.3f}, inside the interval of {margin:.3f}"
+        verdicts.append(f"{rrf['model']}: {verdict}")
+    return f"- {VARIANT_NAMES[variant]}: " + "; ".join(verdicts) + "."
 
 
 def _leakage(result: dict[str, Any]) -> str:
