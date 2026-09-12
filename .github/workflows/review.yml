@@ -10,6 +10,19 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Two pushes to one pull request fire two deliveries with two different ids, and the
+  # deliveries primary key only stops a redelivery of the same id. Without this group both
+  # runs review the pull request, which at Phase 4 is two comments on one line. The newest
+  # head is the one worth reviewing, so the older run is cancelled.
+  #
+  # The cost, accepted: a manual redelivery that lands while its own original run is still
+  # going cancels that run, and the redelivery then skips as already recorded. That pull
+  # request gets no review. Silence is a valid output; a duplicate comment is not.
+  # Cancelling cannot un-post a comment already sent, which is what the Phase 4 ledger is for.
+  group: review-${{ github.event.client_payload.repo_full_name }}-${{ github.event.client_payload.pr_number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     runs-on: ubuntu-latest
