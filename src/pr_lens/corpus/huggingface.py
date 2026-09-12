@@ -12,10 +12,12 @@ stated number in 2026, while free private storage is a stated 100 GB.
 import json
 import logging
 import os
+import random
+import time
 from collections.abc import Mapping
 
 from huggingface_hub import CommitOperationAdd, HfApi
-from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError
+from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError, RepositoryNotFoundError
 
 from pr_lens.corpus.writer import MANIFEST_DIR
 
@@ -25,6 +27,10 @@ CORPUS_REPO = "suryaprasathjp/pr-lens-corpus"
 
 # The Hub rejects a commit carrying more than 100 files.
 MAX_FILES_PER_COMMIT = 100
+
+# Busy, not wrong: rate limited, conflicting with a concurrent commit, or a server error.
+RETRYABLE_STATUSES = frozenset({409, 412, 429, 500, 502, 503, 504})
+COMMIT_ATTEMPTS = 6
 
 
 class HuggingFaceSink:
@@ -55,6 +61,16 @@ class HuggingFaceSink:
             loaded: dict[str, str] = json.load(handle)
         return loaded
 
+    def read(self, name: str) -> bytes | None:
+        try:
+            local = self._api.hf_hub_download(
+                repo_id=self.repo_id, repo_type="dataset", filename=name
+            )
+        except EntryNotFoundError:
+            return None
+        with open(local, "rb") as handle:
+            return handle.read()
+
     def write(self, files: Mapping[str, bytes]) -> None:
         operations = [
             CommitOperationAdd(path_in_repo=name, path_or_fileobj=payload)
@@ -62,10 +78,29 @@ class HuggingFaceSink:
         ]
         for start in range(0, len(operations), MAX_FILES_PER_COMMIT):
             batch = operations[start : start + MAX_FILES_PER_COMMIT]
-            self._api.create_commit(
-                repo_id=self.repo_id,
-                repo_type="dataset",
-                operations=batch,
-                commit_message=f"ingest: {len(batch)} shards",
-            )
+            self._commit(batch)
             logger.info("uploaded %s files to %s", len(batch), self.repo_id)
+
+    def _commit(self, batch: list[CommitOperationAdd]) -> None:
+        """One commit, retried when the Hub is busy rather than wrong.
+
+        The Phase 2 embed matrix finishes up to twenty jobs at once against this one repo,
+        so a rate limit or a commit landing on a moved branch is expected, and losing an
+        hour of embedding to it is not acceptable. Anything else is raised at once.
+        """
+        for attempt in range(COMMIT_ATTEMPTS):
+            try:
+                self._api.create_commit(
+                    repo_id=self.repo_id,
+                    repo_type="dataset",
+                    operations=batch,
+                    commit_message=f"pr-lens: {len(batch)} files",
+                )
+                return
+            except HfHubHTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                if status not in RETRYABLE_STATUSES or attempt == COMMIT_ATTEMPTS - 1:
+                    raise
+                wait = min(300.0, 10.0 * 2**attempt) + random.random() * 5  # noqa: S311 -- jitter
+                logger.warning("the Hub returned %s, retrying the commit in %.0fs", status, wait)
+                time.sleep(wait)

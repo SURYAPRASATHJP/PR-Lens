@@ -17,6 +17,8 @@ import hashlib
 import io
 import json
 import logging
+import os
+import threading
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -71,7 +73,15 @@ class LocalSink:
         for name, payload in files.items():
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(payload)
+            # Via a temporary file and a rename, so two writers racing on one path leave
+            # one whole file rather than an interleaving of both.
+            partial = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}")
+            partial.write_bytes(payload)
+            partial.replace(path)
+
+    def read(self, name: str) -> bytes | None:
+        path = self.root / name
+        return path.read_bytes() if path.exists() else None
 
 
 def write_units(sink: Sink, repo: str, units: Iterable[CorpusUnit]) -> ShardReport:

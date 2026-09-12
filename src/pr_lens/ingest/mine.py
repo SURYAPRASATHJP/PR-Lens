@@ -165,35 +165,45 @@ async def review_comment_units(client: GitHubClient, repo: str, limit: int) -> l
         max_items=limit,
         max_age=LISTING_MAX_AGE,
     ):
-        body = _as_str(comment.get("body"))
-        if not body:
-            continue
-        comment_id = int(comment["id"])
-        path = _as_str(comment.get("path"))
-        diff_hunk = _as_str(comment.get("diff_hunk")) or ""
-        line = comment.get("line") or comment.get("original_line")
-        units.append(
-            CorpusUnit(
-                repo=repo,
-                kind="review_comment",
-                identity=f"review_comment/{comment_id}",
-                text=_joined(f"{path}:{line}" if path else None, diff_hunk, body),
-                ref=_as_str(comment.get("commit_id")),
-                path=path,
-                start_line=line if isinstance(line, int) else None,
-                end_line=line if isinstance(line, int) else None,
-                metadata={
-                    "comment_id": comment_id,
-                    "author": _login(comment.get("user")),
-                    "diff_hunk": diff_hunk,
-                    "html_url": _as_str(comment.get("html_url")) or "",
-                    "side": _as_str(comment.get("side")) or "",
-                    "pull_request_number": _pr_number(comment.get("pull_request_url")),
-                },
-            )
-        )
+        unit = review_comment_unit(repo, comment)
+        if unit is not None:
+            units.append(unit)
     logger.info("%s: %s review comments", repo, len(units))
     return units
+
+
+def review_comment_unit(repo: str, comment: dict[str, Any]) -> CorpusUnit | None:
+    """One review comment payload as a unit, or None for an empty-bodied one.
+
+    The Phase 2 eval re-serialises these body only, and recovers the body from the text
+    this function builds. Change the text layout here and eval.corpus.body_only has to
+    change with it; the test that round-trips a comment through both is what notices.
+    """
+    body = _as_str(comment.get("body"))
+    if not body:
+        return None
+    comment_id = int(comment["id"])
+    path = _as_str(comment.get("path"))
+    diff_hunk = _as_str(comment.get("diff_hunk")) or ""
+    line = comment.get("line") or comment.get("original_line")
+    return CorpusUnit(
+        repo=repo,
+        kind="review_comment",
+        identity=f"review_comment/{comment_id}",
+        text=_joined(f"{path}:{line}" if path else None, diff_hunk, body),
+        ref=_as_str(comment.get("commit_id")),
+        path=path,
+        start_line=line if isinstance(line, int) else None,
+        end_line=line if isinstance(line, int) else None,
+        metadata={
+            "comment_id": comment_id,
+            "author": _login(comment.get("user")),
+            "diff_hunk": diff_hunk,
+            "html_url": _as_str(comment.get("html_url")) or "",
+            "side": _as_str(comment.get("side")) or "",
+            "pull_request_number": _pr_number(comment.get("pull_request_url")),
+        },
+    )
 
 
 async def issue_units(client: GitHubClient, repo: str, limit: int) -> list[CorpusUnit]:

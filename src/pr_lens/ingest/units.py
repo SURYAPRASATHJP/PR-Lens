@@ -31,7 +31,7 @@ class CorpusUnit:
 
     @property
     def unit_id(self) -> str:
-        return _digest(f"{self.repo}\x00{self.kind}\x00{self.identity}")
+        return unit_id_for(self.repo, self.kind, self.identity)
 
     @property
     def content_hash(self) -> str:
@@ -81,6 +81,16 @@ class CorpusUnit:
             "char_count": self.char_count,
             "metadata": self.metadata,
         }
+
+
+def unit_id_for(repo: str, kind: UnitKind, identity: str) -> str:
+    """A unit's id without building the unit, for callers that know it from elsewhere.
+
+    The eval pair miner holds a review comment id from the API and needs the corpus unit
+    it corresponds to. Deriving it here, rather than repeating the hash, keeps the two
+    from drifting apart.
+    """
+    return _digest(f"{repo}\x00{kind}\x00{identity}")
 
 
 def _canonical(value: object) -> str:
