@@ -29,6 +29,18 @@ db = ["asyncpg>=0.30"]
 # dependencies so the receiver's closure stays three packages wide.
 ingest = ["huggingface-hub>=0.26"]
 
+# Phase 2 retrieval and the recall table. Everything here runs on the Actions runner,
+# because no hosted embedding API is a permanent free tier. torch comes from the CPU
+# index on Linux: the default PyPI wheel drags in about 3 GB of CUDA libraries that a
+# runner with no GPU would download on every run.
+retrieval = [
+    "numpy>=2.1",
+    "scipy>=1.14",
+    "sentence-transformers>=5.0",
+    "torch>=2.8",
+    "pyarrow>=18",
+]
+
 dev = [
     "ruff>=0.8",
     "mypy>=1.13",
@@ -38,7 +50,16 @@ dev = [
     "uvicorn[standard]>=0.32",
     { include-group = "db" },
     { include-group = "ingest" },
+    { include-group = "retrieval" },
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 100
@@ -75,7 +96,14 @@ files = ["src", "tests"]
 plugins = []
 
 [[tool.mypy.overrides]]
-module = ["asyncpg.*", "huggingface_hub.*"]
+module = [
+    "asyncpg.*",
+    "huggingface_hub.*",
+    "sentence_transformers.*",
+    "scipy.*",
+    "pyarrow.*",
+    "transformers.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
