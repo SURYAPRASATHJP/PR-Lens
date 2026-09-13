@@ -26,13 +26,13 @@ from pr_lens.corpus.writer import LocalSink, Sink
 from pr_lens.db.connection import connect
 from pr_lens.github.cache import HttpCache
 from pr_lens.github.client import GitHubClient, GitHubError, NotFound
+from pr_lens.github.mining import DEFAULT_CACHE_DIR, mining_token
 from pr_lens.ingest.mine import MiningLimits
 from pr_lens.ingest.pipeline import ingest_repo
 from pr_lens.logging import configure
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CACHE_DIR = Path(".cache/github")
 DEFAULT_CORPUS_DIR = Path(".corpus")
 
 # Six hours is the runner's ceiling. Stopping at five leaves room to save the cache.
@@ -71,16 +71,6 @@ def resolve_repos(args: argparse.Namespace) -> list[str]:
     if raw.startswith(("[", "{")):
         return _repos_from_json(json.loads(raw))
     return [item.strip() for item in raw.split(",") if item.strip()]
-
-
-def mining_token() -> str | None:
-    """GH_MINING_TOKEN if the mining run has its own credential, else the dispatch PAT.
-
-    Never the workflow's GITHUB_TOKEN: it is capped at 1,000 requests per hour per
-    repository, and the client refuses it rather than running at a fifth of the speed and
-    looking like a slow network.
-    """
-    return os.environ.get("GH_MINING_TOKEN") or os.environ.get("GH_DISPATCH_TOKEN")
 
 
 def build_sink(args: argparse.Namespace) -> Sink:

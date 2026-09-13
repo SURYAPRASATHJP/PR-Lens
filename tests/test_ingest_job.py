@@ -9,10 +9,10 @@ import respx
 
 from pr_lens.github.cache import HttpCache
 from pr_lens.github.client import API_ROOT, GitHubClient, GitHubError
+from pr_lens.github.mining import mining_token
 from pr_lens.jobs.ingest import (
     build_sink,
     main,
-    mining_token,
     parse_args,
     preflight,
     resolve_repos,

@@ -37,8 +37,8 @@ from pr_lens.eval.split import require_tune, tune_repos
 from pr_lens.eval.store import Store, build_store
 from pr_lens.github.cache import HttpCache
 from pr_lens.github.client import GitHubClient
+from pr_lens.github.mining import DEFAULT_CACHE_DIR, mining_token
 from pr_lens.ingest.mine import MiningLimits
-from pr_lens.jobs.ingest import DEFAULT_CACHE_DIR, mining_token
 from pr_lens.logging import configure
 
 logger = logging.getLogger(__name__)
