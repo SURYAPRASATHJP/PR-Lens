@@ -33,7 +33,14 @@ from pr_lens.eval.recall import interval
 from pr_lens.eval.store import Store, build_store
 from pr_lens.jobs.plan import ANCHOR_PARTS
 from pr_lens.logging import configure
-from pr_lens.retrieval.embed import MODELS, SentenceEncoder, embed_part, load_part, part_fingerprint
+from pr_lens.retrieval.embed import (
+    MODELS,
+    SentenceEncoder,
+    embed_part,
+    is_current,
+    load_part,
+    part_fingerprint,
+)
 from pr_lens.retrieval.search import FlatIndex
 
 logger = logging.getLogger(__name__)
@@ -105,15 +112,15 @@ def fingerprint(part: int, parts: int) -> str:
 
 
 def embed(store: Store, part: int, parts: int) -> None:
+    path, expected = part_path(part, parts), fingerprint(part, parts)
+    # Asked before the corpus download and the model load. The fingerprint depends only on
+    # the pinned dataset revision and the model, so a finished part is known to be finished
+    # without either, and a re-run of the whole workflow costs seconds here, not minutes.
+    if is_current(store, path, expected):
+        logger.info("%s: already embedded, nothing to do", path)
+        return
     ids, texts = corpus()
-    embed_part(
-        store,
-        part_path(part, parts),
-        fingerprint(part, parts),
-        ids[part::parts],
-        texts[part::parts],
-        SentenceEncoder(MODEL),
-    )
+    embed_part(store, path, expected, ids[part::parts], texts[part::parts], SentenceEncoder(MODEL))
 
 
 def score(store: Store, parts: int) -> dict[str, Any]:

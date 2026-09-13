@@ -22,7 +22,14 @@ from pr_lens.eval.store import Store, build_store
 from pr_lens.eval.vectors import PartInput, corpus_part, query_part
 from pr_lens.jobs.pairs import load_pairs
 from pr_lens.logging import configure
-from pr_lens.retrieval.embed import MODELS, EmbedReport, Encoder, SentenceEncoder, embed_part
+from pr_lens.retrieval.embed import (
+    MODELS,
+    EmbedReport,
+    Encoder,
+    SentenceEncoder,
+    embed_part,
+    is_current,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +72,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             pairs, str(manifest["sha256"]), args.version, model, args.part, args.parts
         )
 
+    # Before the model load, so a re-run over finished parts costs a read, not a download.
+    if is_current(store, target.path, target.fingerprint):
+        logger.info("%s: already embedded, nothing to do", target.path)
+        return 0
     embed_input(store, target, SentenceEncoder(model))
     return 0
 

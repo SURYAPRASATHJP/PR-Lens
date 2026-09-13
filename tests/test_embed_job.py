@@ -15,6 +15,7 @@ from pr_lens.eval.corpus import load_repo
 from pr_lens.eval.vectors import BODY_PREFIX, corpus_part, document_matrix, load_rows
 from pr_lens.ingest.mine import review_comment_unit
 from pr_lens.ingest.units import CorpusUnit
+from pr_lens.jobs import embed as embed_job
 from pr_lens.jobs.embed import embed_input
 from pr_lens.retrieval.embed import MODELS, EmbeddingModel, load_part
 
@@ -117,6 +118,19 @@ def test_a_changed_corpus_is_re_embedded_and_stale_vectors_are_refused(sink: Loc
         load_part(sink, fresh.path, fresh.fingerprint)
     assert embed_all(sink, parts=1, encoder=HashEncoder()) == [False]
     assert load_part(sink, fresh.path, fresh.fingerprint).fingerprint == fresh.fingerprint
+
+
+def test_the_job_skips_a_finished_part_without_loading_a_model(
+    sink: LocalSink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    embed_input(sink, corpus_part(load_repo(sink, REPO), MODEL, 0, 1), HashEncoder())
+
+    def must_not_load(*_: object) -> None:
+        raise AssertionError("a finished part must not load a model")
+
+    monkeypatch.setattr(embed_job, "SentenceEncoder", must_not_load)
+    argv = ["--target", "corpus", "--model", MODEL.key, "--repo", REPO]
+    assert embed_job.main([*argv, "--corpus-dir", str(sink.root)]) == 0
 
 
 def test_a_missing_part_is_an_error_not_a_smaller_index(sink: LocalSink) -> None:

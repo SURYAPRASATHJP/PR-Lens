@@ -174,6 +174,16 @@ def part_fingerprint(source: str, model: EmbeddingModel, part: int, parts: int) 
     return hashlib.sha256(key.encode()).hexdigest()
 
 
+def is_current(store: VectorStore, path: str, fingerprint: str) -> bool:
+    """Whether path already holds vectors built from exactly this input.
+
+    Cheap on purpose: the fingerprint sits in a few bytes beside the vectors, so a job can
+    ask before it downloads a corpus or loads a model it will not need.
+    """
+    stored = store.read(f"{path}.fingerprint")
+    return stored is not None and stored.decode() == fingerprint
+
+
 def embed_part(
     store: VectorStore,
     path: str,
@@ -184,12 +194,10 @@ def embed_part(
 ) -> EmbedReport:
     """Embed texts into path, unless path already holds them under this fingerprint.
 
-    The fingerprint sits in a few bytes beside the vectors, so the skip check never
-    downloads the vectors to decide. The two are written in one call, which on the Hub is
-    one commit, so they can never be seen apart.
+    The vectors and their fingerprint are written in one call, which on the Hub is one
+    commit, so they can never be seen apart.
     """
-    stored = store.read(f"{path}.fingerprint")
-    if stored is not None and stored.decode() == fingerprint:
+    if is_current(store, path, fingerprint):
         logger.info("%s: unchanged, nothing to embed", path)
         return EmbedReport(path=path, skipped=True)
 
