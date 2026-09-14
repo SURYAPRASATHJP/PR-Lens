@@ -31,12 +31,13 @@ from pr_lens.sandbox.images import NODE_IMAGE, PYTHON_IMAGE
 from pr_lens.sandbox.runner import PROJECT_SITE
 from pr_lens.sandbox.spec import MAX_REQUIREMENTS, Fetcher, SpecError, check_requirement
 
-# Dependency tables whose names mean "what the tests need". Checked in this order, and dev
-# only when none of the others exists, because dev usually means linters and docs
-# tooling as well, and each extra package is another chance of an sdist-only dependency
-# failing the binary-only fetch.
-TEST_KEYS = ("test", "tests", "testing")
-FALLBACK_KEYS = ("dev",)
+# Dependency groups read for the tests, beside every optional-dependencies extra and any
+# group tool.uv.default-groups names. Measured on the mined repositories 14 Sep 2026, which
+# moved this from "test groups, and dev only when there is none": urllib3's conftest
+# imports trustme, which only its dev group names, and tox's and strawberry's suites import
+# the extras they test. A package with no wheel is dropped by the fetch and recorded, so
+# reading too much costs download time, while reading too little costs the whole run.
+GROUP_KEYS = ("test", "tests", "testing", "dev")
 
 # Checked in this order, each one that exists is read.
 REQUIREMENT_FILES = (
@@ -45,9 +46,11 @@ REQUIREMENT_FILES = (
     "requirements_test.txt",
     "requirements-tests.txt",
     "test-requirements.txt",
+    "test_requirements.txt",
     "requirements-dev.txt",
     "requirements_dev.txt",
     "dev-requirements.txt",
+    "dev_requirements.txt",
     "requirements/test.txt",
     "requirements/tests.txt",
     "requirements/testing.txt",
@@ -55,11 +58,14 @@ REQUIREMENT_FILES = (
 )
 
 # The source is a tarball with no .git, and version plugins that read git history fail
-# the project build without one of these. The version is a placeholder, not a claim.
+# the project build without one of these. The version is a placeholder, not a claim, and
+# a high one: minimum-version checks are far commoner than maximum ones. 0.0.0 was tried
+# first and failed pytest's own suite on its minversion, 14 Sep 2026.
+PLACEHOLDER_VERSION = "9999.0.0"
 VERSION_OVERRIDES: tuple[tuple[str, str], ...] = (
-    ("SETUPTOOLS_SCM_PRETEND_VERSION", "0.0.0"),
-    ("PDM_BUILD_SCM_VERSION", "0.0.0"),
-    ("POETRY_DYNAMIC_VERSIONING_BYPASS", "0.0.0"),
+    ("SETUPTOOLS_SCM_PRETEND_VERSION", PLACEHOLDER_VERSION),
+    ("PDM_BUILD_SCM_VERSION", PLACEHOLDER_VERSION),
+    ("POETRY_DYNAMIC_VERSIONING_BYPASS", PLACEHOLDER_VERSION),
 )
 
 # Builds the project against the fetched dependencies, with no network, into a directory
@@ -82,8 +88,18 @@ PYTHON_SETUP = (
 )
 
 # -rfE lists every failure and error in the short summary, which is what evidence.py
-# reads. Colour off, because the output is parsed, not looked at.
-PYTEST_COMMAND = ("python", "-m", "pytest", "-rfE", "--tb=short", "--color=no")
+# reads. Colour off, because the output is parsed, not looked at. A collection error
+# otherwise interrupts the whole session: redis-py ran no tests at all over seven
+# unimportable modules, 14 Sep 2026, when the rest of its suite could have run.
+PYTEST_COMMAND = (
+    "python",
+    "-m",
+    "pytest",
+    "-rfE",
+    "--tb=short",
+    "--color=no",
+    "--continue-on-collection-errors",
+)
 
 # pytest's own exit code for "collected nothing". That is NO_TESTS, not a failure.
 PYTEST_NO_TESTS_EXIT = 5
@@ -321,16 +337,12 @@ def _string_list(value: object) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
-def _keyed(table: object, notes: list[str], where: str) -> list[str]:
-    """The test-ish keys of a table that has them, by the order in TEST_KEYS."""
+def _groups(table: object, also: Iterable[str] = ()) -> list[str]:
+    """The keys of a group table to read: GROUP_KEYS in order, then any also names."""
     if not isinstance(table, dict):
         return []
-    keys = [key for key in TEST_KEYS if key in table]
-    if not keys:
-        keys = [key for key in FALLBACK_KEYS if key in table]
-        if keys:
-            notes.append(f"no test group in {where}, used {', '.join(keys)}")
-    return keys
+    wanted = [*GROUP_KEYS, *(key for key in also if key not in GROUP_KEYS)]
+    return [key for key in wanted if key in table]
 
 
 def _dependency_group(groups: dict[str, Any], name: str, depth: int = 0) -> list[str]:
@@ -376,7 +388,7 @@ def _poetry(pyproject: dict[str, Any], notes: list[str]) -> list[str]:
         return []
     tables: list[object] = [poetry.get("dependencies")]
     groups = poetry.get("group", {})
-    for key in _keyed(groups, notes, "[tool.poetry.group]"):
+    for key in _groups(groups):
         tables.append(groups[key].get("dependencies") if isinstance(groups[key], dict) else None)
     tables.append(poetry.get("dev-dependencies"))
     names: list[str] = []
@@ -410,12 +422,18 @@ def _python_requirements(
         raw += _string_list(project.get("dependencies"))
         own_name = project.get("name") if isinstance(project.get("name"), str) else None
         extras = project.get("optional-dependencies") or {}
-        for key in _keyed(extras, notes, "[project.optional-dependencies]"):
-            raw += _string_list(extras[key])
+        if isinstance(extras, dict) and extras:
+            notes.append(f"read every extra: {', '.join(extras)}")
+            for key in extras:
+                raw += _string_list(extras[key])
 
     groups = pyproject.get("dependency-groups")
-    if isinstance(groups, dict):
-        for key in _keyed(groups, notes, "[dependency-groups]"):
+    uv = pyproject.get("tool", {}).get("uv", {})
+    defaults = _string_list(uv.get("default-groups")) if isinstance(uv, dict) else []
+    keys = _groups(groups, defaults)
+    if isinstance(groups, dict) and keys:
+        notes.append(f"read dependency groups: {', '.join(keys)}")
+        for key in keys:
             raw += _dependency_group(groups, key)
 
     raw += _setup_cfg(root, notes)
@@ -440,9 +458,8 @@ def _setup_cfg(root: Path, notes: list[str]) -> list[str]:
     if parser.has_option("options", "install_requires"):
         out += parser.get("options", "install_requires").splitlines()
     if parser.has_section("options.extras_require"):
-        section = dict(parser.items("options.extras_require"))
-        for key in _keyed(section, notes, "setup.cfg extras_require"):
-            out += section[key].splitlines()
+        for _, value in parser.items("options.extras_require"):
+            out += value.splitlines()
     return [line.strip() for line in out if line.strip()]
 
 

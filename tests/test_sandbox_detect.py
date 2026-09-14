@@ -81,21 +81,24 @@ def test_a_full_pyproject_yields_pytest_with_its_test_dependencies(tmp_path: Pat
     assert detection.no_tests_exit_codes == frozenset({5})
     assert "[tool.pytest] in pyproject.toml" in detection.reason
     assert "2 test files" in detection.reason
-    # Build backend first, then runtime, then the test extra with demo[fast] expanded in
-    # place of a download of the published demo, then the PEP 735 group and its include.
+    # Build backend first, then runtime, then every extra in file order with demo[fast]
+    # standing for its own extra rather than a download of the published demo, then the
+    # PEP 735 test group and the group it includes.
     assert detection.requirements == (
         "hatchling",
         "hatch-vcs",
         "httpx>=0.28",
         "attrs",
+        "orjson",
         "pytest-asyncio",
         "respx",
+        "sphinx",
         "coverage",
         "ruff",
-        "orjson",
     )
-    assert "sphinx" not in detection.requirements
-    assert ("SETUPTOOLS_SCM_PRETEND_VERSION", "0.0.0") in detection.env
+    assert "read every extra: fast, test, docs" in detection.notes
+    assert "read dependency groups: test" in detection.notes
+    assert ("SETUPTOOLS_SCM_PRETEND_VERSION", "9999.0.0") in detection.env
 
 
 def test_tests_without_any_packaging_run_from_the_tree(tmp_path: Path) -> None:
@@ -140,20 +143,44 @@ def test_requirements_files_are_read_and_hazards_skipped_with_a_note(tmp_path: P
     assert any("1 requirements are not index packages" in note for note in detection.notes)
 
 
-def test_dev_is_used_only_when_there_is_no_test_group_and_that_is_noted(tmp_path: Path) -> None:
+def test_dev_and_uv_default_groups_are_read_beside_the_test_group(tmp_path: Path) -> None:
+    """urllib3's shape, measured 14 Sep 2026: its conftest imports trustme, which only the
+    dev group names. Reading the test group alone ran none of its suite."""
     write(
         tmp_path,
         {
             "pyproject.toml": (
                 "[project]\nname = 'x'\nversion = '1'\n"
-                "[project.optional-dependencies]\ndev = ['pytest-cov']\n"
+                "[dependency-groups]\n"
+                "test = ['pytest-timeout']\n"
+                "dev = [{include-group = 'test'}, 'trustme']\n"
+                "integrations = ['fastapi']\n"
+                "docs = ['sphinx']\n"
+                "[tool.uv]\ndefault-groups = ['dev', 'integrations']\n"
             ),
             "tests/test_x.py": "",
         },
     )
     detection = detect(tmp_path)
-    assert "pytest-cov" in detection.requirements
-    assert any("used dev" in note for note in detection.notes)
+    # A [project] with no build backend gets PEP 517's setuptools fallback first.
+    assert detection.requirements == (
+        "setuptools>=40.8.0",
+        "wheel",
+        "pytest-timeout",
+        "trustme",
+        "fastapi",
+    )
+    assert "read dependency groups: test, dev, integrations" in detection.notes
+
+
+def test_a_dev_requirements_file_with_an_underscore_is_read(tmp_path: Path) -> None:
+    """redis-py's shape: no groups at all, and dev_requirements.txt."""
+    write(tmp_path, {"dev_requirements.txt": "pytest-asyncio\n", "tests/test_x.py": ""})
+    assert detect(tmp_path).requirements == ("pytest-asyncio",)
+
+
+def test_pytest_keeps_going_past_a_module_that_will_not_import() -> None:
+    assert "--continue-on-collection-errors" in PYTEST_COMMAND
 
 
 def test_setup_cfg_and_poetry_contribute_their_static_dependencies(tmp_path: Path) -> None:
