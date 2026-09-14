@@ -5,8 +5,11 @@ name: sandbox
 # Docker Hub is not touched here; the images are built by sandbox-images.yml.
 #
 # The escape suite runs on every change to the sandbox. The real-data run, one job per
-# mined repository, is manual, and runs only after the escape suite has passed in the same
-# workflow run, so the table never describes a sandbox the gate did not hold for.
+# mined repository, runs on every push that changes the sandbox and on demand, because a
+# gate on fixtures alone is production check 3 failed. It never runs for a pull request,
+# whose runs get no secrets when they come from a fork. And it runs only after the escape
+# suite has passed in the same workflow run, so the table never describes a sandbox the
+# gate did not hold for. Twenty-seven jobs a push costs nothing on a public repository.
 on:
   push:
     paths:
@@ -69,7 +72,7 @@ jobs:
       - name: The escape suite
         run: |
           set -o pipefail
-          uv run pytest -m docker -v -p no:cacheprovider 2>&1 | tee escape.log
+          uv run pytest -m docker -rA -p no:cacheprovider 2>&1 | tee escape.log
 
       - name: Put the result where the public API can read it
         if: always()
@@ -77,13 +80,13 @@ jobs:
           python3 - <<'EOF'
           from pathlib import Path
           path = Path("escape.log")
-          text = path.read_text(errors="replace")[-20000:] if path.exists() else "no log"
+          text = path.read_text(errors="replace")[-40000:] if path.exists() else "no log"
           escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
           print("::notice title=escape suite::" + escaped)
           EOF
 
   repos:
-    if: github.event_name == 'workflow_dispatch' && inputs.real_data
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.real_data)
     runs-on: ubuntu-latest
     outputs:
       repos: ${{ steps.repos.outputs.repos }}
