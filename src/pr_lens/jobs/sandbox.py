@@ -50,8 +50,10 @@ DEFAULT_ROWS = Path("sandbox-rows")
 DEFAULT_TABLE = Path("docs/sandbox/phase-3-runs.md")
 
 # A workflow annotation is how a row leaves a runner in a form anyone can read back
-# without a token. GitHub caps an annotation's message; a row is kept well under it.
-ANNOTATION_LIMIT = 60_000
+# without a token. GitHub cuts a message at 4096 bytes, found when eleven of the first
+# twenty-seven rows came back truncated, so a row is sent as numbered chunks under that.
+ANNOTATION_CHUNK = 3500
+MAX_ANNOTATION_CHUNKS = 9
 
 
 @dataclass(slots=True)
@@ -68,6 +70,7 @@ class Row:
     fetch_seconds: float | None = None
     fetch_outcome: str | None = None
     requirements: int | None = None
+    dropped: list[str] = field(default_factory=list)
     setup_exit_code: int | None = None
     run_seconds: float | None = None
     exit_code: int | None = None
@@ -144,7 +147,8 @@ async def run_detected(detection: Detection, source: Path, row: Row) -> Row:
     row.pull_seconds = round(await runner.pull(detection.image), 2)
 
     async with runner.deps_volume() as volume:
-        fetched = await runner.fetch(
+        started = time.monotonic()
+        fetched, dropped = await runner.fetch_dropping_unavailable(
             FetchSpec(
                 image=detection.image,
                 fetcher=detection.fetcher,
@@ -153,8 +157,9 @@ async def run_detected(detection: Detection, source: Path, row: Row) -> Row:
                 requirements=detection.requirements,
             )
         )
-        row.fetch_seconds = round(fetched.duration_seconds, 2)
+        row.fetch_seconds = round(time.monotonic() - started, 2)
         row.fetch_outcome = fetched.outcome.value
+        row.dropped = list(dropped)
         if fetched.outcome is not Outcome.PASSED:
             row.outcome = Outcome.INSTALL_FAILED.value
             row.excerpt = _tail(fetched)
@@ -218,9 +223,18 @@ async def run_repo(repo: str) -> Row:
 
 
 def annotate(title: str, message: str) -> None:
-    """A notice annotation: readable from the public API, unlike the job log."""
-    escaped = message[:ANNOTATION_LIMIT].replace("%", "%25").replace("\r", "%0D")
-    sys.stdout.write(f"::notice title={title}::{escaped.replace(chr(10), '%0A')}\n")
+    """Notice annotations, readable from the public API, unlike the job log.
+
+    Titled "title i/n" so the chunks can be put back in order. A message too long for
+    MAX_ANNOTATION_CHUNKS keeps its tail, where a runner's summary is.
+    """
+    budget = ANNOTATION_CHUNK * MAX_ANNOTATION_CHUNKS
+    if len(message) > budget:
+        message = message[-budget:]
+    chunks = [message[i : i + ANNOTATION_CHUNK] for i in range(0, len(message), ANNOTATION_CHUNK)]
+    for index, chunk in enumerate(chunks or [""], start=1):
+        escaped = chunk.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        sys.stdout.write(f"::notice title={title} {index}/{len(chunks)}::{escaped}\n")
     sys.stdout.flush()
 
 
@@ -305,6 +319,8 @@ def render(rows: list[Row]) -> str:
         lines.append(f"    outcome   {row.outcome}")
         if row.requirements is not None:
             lines.append(f"    fetched   {row.requirements} requirements, {row.fetch_outcome}")
+        for requirement in row.dropped:
+            lines.append(f"    dropped   {requirement}, no wheel")
         if row.setup_exit_code is not None:
             lines.append(f"    setup     exit {row.setup_exit_code}")
         for note in row.notes:

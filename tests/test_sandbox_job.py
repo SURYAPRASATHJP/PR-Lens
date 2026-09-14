@@ -194,7 +194,24 @@ def test_an_annotation_survives_newlines_and_percent_signs(
 ) -> None:
     job.annotate("sandbox-row a/b", 'line one\nline two 100%\r{"k": 1}')
     out = capsys.readouterr().out
-    assert out == '::notice title=sandbox-row a/b::line one%0Aline two 100%25%0D{"k": 1}\n'
+    assert out == '::notice title=sandbox-row a/b 1/1::line one%0Aline two 100%25%0D{"k": 1}\n'
+
+
+def test_a_long_row_is_split_under_githubs_annotation_cap_and_reassembles(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """GitHub cuts an annotation at 4096 bytes. Eleven of the first 27 rows were cut."""
+    row = json.dumps({"excerpt": "x" * 10_000, "repo": "a/b"})
+    job.annotate("sandbox-row a/b", row)
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 3
+    chunks = []
+    for index, line in enumerate(lines, start=1):
+        header, _, body = line.removeprefix("::").partition("::")
+        assert header == f"notice title=sandbox-row a/b {index}/3"
+        assert len(body.encode()) < 4096
+        chunks.append(body)
+    assert json.loads("".join(chunks)) == json.loads(row)
 
 
 def test_the_table_renders_from_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

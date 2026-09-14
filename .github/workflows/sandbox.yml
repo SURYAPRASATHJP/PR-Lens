@@ -80,7 +80,8 @@ jobs:
           python3 - <<'EOF'
           from pathlib import Path
           path = Path("escape.log")
-          text = path.read_text(errors="replace")[-40000:] if path.exists() else "no log"
+          # GitHub cuts an annotation at 4096 bytes, so send the tail, where the verdict is.
+          text = path.read_text(errors="replace")[-3800:] if path.exists() else "no log"
           escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
           print("::notice title=escape suite::" + escaped)
           EOF
