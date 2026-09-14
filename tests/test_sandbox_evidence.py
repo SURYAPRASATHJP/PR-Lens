@@ -78,6 +78,14 @@ def test_a_pytest_collection_error_carries_the_import_that_failed() -> None:
     )
 
 
+def test_pytest_pretty_counts_are_read_through_its_colour_codes() -> None:
+    """pydantic-settings in the real-data run: pytest-pretty's summary block, bold in ANSI
+    even with --color=no, parsed as nothing at all until this fixture existed."""
+    evidence = parse(Framework.PYTEST, *captured("pytest-pretty"))
+    assert evidence.parser == "pytest"
+    assert evidence.counts == Counts(passed=787, skipped=5)
+
+
 def test_jest_reports_on_stderr_and_locates_each_failure_in_the_test_file() -> None:
     evidence = parse(Framework.JEST, *captured("jest"))
     assert evidence.parser == "jest"

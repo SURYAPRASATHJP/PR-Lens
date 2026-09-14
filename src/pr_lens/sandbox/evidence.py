@@ -32,6 +32,8 @@ _JEST_SEPARATOR = "\u203a"  # SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
 _VITEST_POINTER = "\u276f"  # HEAVY RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT
 _NODE_INFO = "\u2139"  # INFORMATION SOURCE
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
 
 @dataclass(frozen=True, slots=True)
 class Failure:
@@ -115,6 +117,9 @@ def _count(summary: str, *words: str) -> int | None:
 _PYTEST_SUMMARY_ENTRY = re.compile(r"^(FAILED|ERROR) (.+?)(?: - (.*))?$")
 _PYTEST_BLOCK = re.compile(r"^_{3,} (.+?) _{3,}$")
 _PYTEST_FINAL = re.compile(r"^=+ (.*\d+ (?:passed|failed|errors?|skipped).*) in [\d.]+s", re.M)
+# pytest-pretty replaces the final line with a block, one count to a line. Found on
+# pydantic-settings in the real-data run, 14 Sep 2026.
+_PYTEST_PRETTY = re.compile(r"^Results \([\d.]+s\):\n((?:[ \t]+\d+ \w+\n?)+)", re.M)
 _PYTEST_LOCATION = re.compile(r"^([^\s:]+\.py):(\d+): ")
 
 
@@ -170,7 +175,7 @@ def _parse_pytest(text: str) -> _Parsed:
             _failure(nodeid, kind, path, int(location[-1][2]) if location else None, message)
         )
 
-    final = _PYTEST_FINAL.findall(text)
+    final = _PYTEST_FINAL.findall(text) or _PYTEST_PRETTY.findall(text)
     counts = None
     if final:
         summary = final[-1]
@@ -383,6 +388,8 @@ def parse(framework: Framework, stdout: str, stderr: str) -> Evidence:
     report across the two, and pytest uses stdout alone.
     """
     text = f"{stdout}\n{stderr}" if stderr.strip() else stdout
+    # Plugins built on rich colour their output even under --color=no.
+    text = _ANSI.sub("", text)
     order = [*_FIRST[framework], *(name for name in _PARSERS if name not in _FIRST[framework])]
     for name in order:
         parsed = _PARSERS[name](text)
