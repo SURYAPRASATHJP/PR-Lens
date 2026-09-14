@@ -45,7 +45,7 @@ def _backoff(attempt: int) -> float:
     near lockstep, and they collide again. Two strawberry parts died that way on
     2026-09-14 after exhausting six attempts.
     """
-    base = min(COMMIT_BACKOFF_CAP, COMMIT_BACKOFF_BASE * 2**attempt)
+    base = min(COMMIT_BACKOFF_CAP, COMMIT_BACKOFF_BASE * 2.0**attempt)
     return base * (0.5 + random.random())  # noqa: S311 -- jitter, not cryptography
 
 
