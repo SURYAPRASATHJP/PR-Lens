@@ -41,6 +41,10 @@ retrieval = [
     "pyarrow>=18",
 ]
 
+# Phase 3 sandbox. packaging validates requirement strings that arrive from the repository
+# under review before any of them reaches pip's command line.
+sandbox = ["packaging>=24"]
+
 dev = [
     "ruff>=0.8",
     "mypy>=1.13",
@@ -51,6 +55,7 @@ dev = [
     { include-group = "db" },
     { include-group = "ingest" },
     { include-group = "retrieval" },
+    { include-group = "sandbox" },
 ]
 
 [tool.uv.sources]
