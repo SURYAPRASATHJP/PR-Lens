@@ -33,8 +33,11 @@ import uuid
 from asyncio.subprocess import DEVNULL, PIPE
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 
 from pr_lens.sandbox.spec import (
     CPU_LIMIT,
@@ -48,6 +51,7 @@ from pr_lens.sandbox.spec import (
     WORK_DIR,
     WORK_TMPFS_MB,
     FetchSpec,
+    Outcome,
     SandboxResult,
     SandboxSpec,
     SpecError,
@@ -76,12 +80,14 @@ _SIGKILL_EXIT = 137
 # split is refused rather than quoted.
 _SAFE_PATH = re.compile(r"^/[A-Za-z0-9._/-]+$")
 
+# The leading newline matters: pip ends its coloured output without one, and a status line
+# glued to the end of someone else's line is a status line nobody finds. Seen 14 Sep 2026.
 _REPORT = rf"""
 report() {{
   local oom peak
   oom=$(sed -n 's/^oom_kill //p' /sys/fs/cgroup/memory.events 2>/dev/null)
   peak=$(cat /sys/fs/cgroup/memory.peak 2>/dev/null)
-  printf '%s exit=%s setup=%s oom_kill=%s peak=%s\n' \
+  printf '\n%s exit=%s setup=%s oom_kill=%s peak=%s\n' \
     {STATUS_MARKER} "$1" "$2" "${{oom:-}}" "${{peak:-}}" >&2
 }}
 """
@@ -135,7 +141,7 @@ fetch() {{
     pip)
       python -m venv --system-site-packages {DEPS_MOUNT}/venv
       if [ "$#" -gt 0 ]; then
-        {DEPS_MOUNT}/venv/bin/python -m pip install --no-cache-dir --disable-pip-version-check \
+        {DEPS_MOUNT}/venv/bin/python -m pip install --disable-pip-version-check \
           --no-input --only-binary=:all: -- "$@"
       fi
       ;;
@@ -191,7 +197,17 @@ _FETCH_ENV: tuple[tuple[str, str], ...] = (
     ("npm_config_manage_package_manager_versions", "false"),
     ("COREPACK_ENABLE_STRICT", "0"),
     ("PIP_NO_INPUT", "1"),
+    ("PIP_NO_COLOR", "1"),
+    # On the volume, so a fetch retried after dropping a requirement does not download
+    # everything again.
+    ("PIP_CACHE_DIR", f"{DEPS_MOUNT}/.pip-cache"),
 )
+
+# How many requirements a fetch may drop before it gives up and reports the failure.
+MAX_DROPPED_REQUIREMENTS = 10
+
+_NO_DISTRIBUTION = re.compile(r"No matching distribution found for (\S+)")
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 class SandboxError(RuntimeError):
@@ -339,7 +355,8 @@ def _read_status(stderr: str) -> tuple[_Status | None, str]:
         oom_kills=int(match["oom"] or 0),
         memory_peak_bytes=int(match["peak"]) if match["peak"] else None,
     )
-    return status, stderr[: match.start()] + stderr[match.end() + 1 :]
+    before = stderr[: match.start()].removesuffix("\n")
+    return status, before + stderr[match.end() + 1 :]
 
 
 async def _docker(*args: str) -> tuple[int, str]:
@@ -417,6 +434,48 @@ async def run(spec: SandboxSpec) -> SandboxResult:
 async def fetch(spec: FetchSpec) -> SandboxResult:
     name = container_name()
     return await execute(fetch_argv(spec, name), name, spec.timeout_seconds)
+
+
+def unavailable_requirement(output: str, requirements: tuple[str, ...]) -> str | None:
+    """The requirement pip said has no distribution it may use, if it is one we passed.
+
+    Only a top-level requirement is dropped. When the missing package came in as someone
+    else's dependency this returns None and the fetch is reported as failed, because
+    guessing which requirement pulled it in would be guessing.
+    """
+    match = _NO_DISTRIBUTION.search(_ANSI.sub("", output))
+    if match is None:
+        return None
+    try:
+        missing = canonicalize_name(Requirement(match[1]).name)
+    except InvalidRequirement:
+        return None
+    for line in requirements:
+        if canonicalize_name(Requirement(line).name) == missing:
+            return line
+    return None
+
+
+async def fetch_dropping_unavailable(spec: FetchSpec) -> tuple[SandboxResult, tuple[str, ...]]:
+    """fetch, and when pip fails on one requirement with no wheel, drop it and resolve again.
+
+    Binary-only means a single sdist-only package fails the whole resolve. Measured on the
+    mined repositories 14 Sep 2026, that was four of the first sixteen: a docs plugin in
+    httpx's requirements, pyspark in pandera's extras. Dropping it and saying so runs every
+    test that does not need it. Returns what was dropped, for the report.
+    """
+    dropped: list[str] = []
+    current = spec
+    while True:
+        result = await fetch(current)
+        if result.outcome is Outcome.PASSED or len(dropped) >= MAX_DROPPED_REQUIREMENTS:
+            return result, tuple(dropped)
+        culprit = unavailable_requirement(result.stdout + result.stderr, current.requirements)
+        if culprit is None:
+            return result, tuple(dropped)
+        dropped.append(culprit)
+        remaining = tuple(line for line in current.requirements if line != culprit)
+        current = replace(current, requirements=remaining)
 
 
 async def pull(image: str) -> float:

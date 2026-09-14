@@ -1,0 +1,45 @@
+Collecting setuptools>=61.0
+  Downloading setuptools-84.0.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting setuptools_scm
+  Downloading setuptools_scm-10.3.2-py3-none-any.whl.metadata (6.7 kB)
+Requirement already satisfied: packaging>=20.0 in /usr/local/lib/python3.12/site-packages (26.3)
+Collecting pydantic
+  Downloading pydantic-2.13.5-py3-none-any.whl.metadata (110 kB)
+Collecting typeguard
+  Downloading typeguard-4.6.0-py3-none-any.whl.metadata (3.7 kB)
+Collecting typing_extensions
+  Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting typing_inspect>=0.6.0
+  Downloading typing_inspect-0.9.0-py3-none-any.whl.metadata (1.5 kB)
+Requirement already satisfied: pytest in /usr/local/lib/python3.12/site-packages (9.1.1)
+Collecting pytest-cov
+  Downloading pytest_cov-7.1.0-py3-none-any.whl.metadata (32 kB)
+Collecting pytest-xdist
+  Downloading pytest_xdist-3.8.0-py3-none-any.whl.metadata (3.0 kB)
+Collecting pytest-asyncio
+  Downloading pytest_asyncio-1.4.0-py3-none-any.whl.metadata (4.1 kB)
+Collecting sphinx
+  Downloading sphinx-9.1.0-py3-none-any.whl.metadata (5.8 kB)
+Collecting numpy>=1.24.4
+  Downloading numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+Requirement already satisfied: pip in /deps/venv/lib/python3.12/site-packages (25.0.1)
+Collecting hypothesis>=6.92.7
+  Downloading hypothesis-6.168.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (5.7 kB)
+Collecting pyyaml>=5.1
+  Downloading pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+Collecting frictionless<=4.40.8
+  Downloading frictionless-4.40.8-py2.py3-none-any.whl.metadata (7.1 kB)
+Collecting pyarrow>=13
+  Downloading pyarrow-25.0.1-cp312-cp312-manylinux_2_28_x86_64.whl.metadata (3.0 kB)
+Collecting pyarrow-hotfix
+  Downloading pyarrow_hotfix-0.7-py3-none-any.whl.metadata (3.6 kB)
+Collecting scipy
+  Downloading scipy-1.18.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (62 kB)
+Collecting pandas-stubs
+  Downloading pandas_stubs-3.0.5.260914-py3-none-any.whl.metadata (11 kB)
+Collecting scipy-stubs
+  Downloading scipy_stubs-1.18.1.0-py3-none-any.whl.metadata (33 kB)
+
+[31mERROR: Could not find a version that satisfies the requirement pyspark>=3.2.0 (from versions: none)[0m[31m
+[0m[31mERROR: No matching distribution found for pyspark>=3.2.0[0m[31m
+[0mpr-lens-sandbox-status exit=1 setup=- oom_kill=0 peak=95637504

@@ -16,6 +16,8 @@ from pr_lens.sandbox.spec import (
     PIDS_LIMIT,
     Fetcher,
     FetchSpec,
+    Outcome,
+    SandboxResult,
     SandboxSpec,
     SpecError,
 )
@@ -223,9 +225,9 @@ def test_a_short_stream_is_returned_whole() -> None:
 def test_the_last_status_line_wins_and_is_removed_from_stderr() -> None:
     stderr = (
         "warning: something\n"
-        "pr-lens-sandbox-status exit=0 setup=- oom_kill=0 peak=1\n"
+        "\npr-lens-sandbox-status exit=0 setup=- oom_kill=0 peak=1\n"
         "more output\n"
-        "pr-lens-sandbox-status exit=1 setup=0 oom_kill=2 peak=4096\n"
+        "\npr-lens-sandbox-status exit=1 setup=0 oom_kill=2 peak=4096\n"
     )
     status, rest = runner._read_status(stderr)
     assert status is not None
@@ -233,6 +235,77 @@ def test_the_last_status_line_wins_and_is_removed_from_stderr() -> None:
     assert (status.oom_kills, status.memory_peak_bytes) == (2, 4096)
     assert rest.endswith("more output\n")
     assert rest.count("pr-lens-sandbox-status") == 1
+
+
+def test_the_status_line_is_printed_on_a_line_of_its_own() -> None:
+    """Captured 14 Sep 2026: pip ends its coloured output without a newline, and the status
+    line was glued to it, unfound, so a clean exit 1 read as a sandbox error."""
+    glued = (FIXTURES / "pip-no-wheel-aiohttp.txt").read_text(encoding="utf-8")
+    assert runner._read_status(glued)[0] is None
+    assert "printf '\\n%s exit=" in runner._REPORT
+
+
+FIXTURES = Path(__file__).parent / "fixtures" / "sandbox"
+
+
+@pytest.mark.parametrize(
+    ("fixture", "requirements", "dropped"),
+    [
+        (
+            "pip-no-wheel-aiohttp",
+            ("attrs==26.1.0", "backports-asyncio-runner==1.2.0", "pytest"),
+            "backports-asyncio-runner==1.2.0",
+        ),
+        ("pip-no-wheel-pandera", ("pandas", "pyspark>=3.2.0"), "pyspark>=3.2.0"),
+    ],
+)
+def test_pip_naming_a_top_level_requirement_with_no_wheel_picks_it_out(
+    fixture: str, requirements: tuple[str, ...], dropped: str
+) -> None:
+    output = (FIXTURES / f"{fixture}.txt").read_text(encoding="utf-8")
+    assert runner.unavailable_requirement(output, requirements) == dropped
+
+
+def test_a_missing_package_nobody_asked_for_directly_is_left_alone() -> None:
+    output = (FIXTURES / "pip-no-wheel-pandera.txt").read_text(encoding="utf-8")
+    assert runner.unavailable_requirement(output, ("pandas", "pandera[spark]")) is None
+    assert runner.unavailable_requirement("some other failure", ("pandas",)) is None
+
+
+async def test_the_fetch_drops_what_has_no_wheel_and_resolves_again(
+    source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    no_wheel = (FIXTURES / "pip-no-wheel-pandera.txt").read_text(encoding="utf-8")
+    seen: list[tuple[str, ...]] = []
+
+    async def fake_fetch(spec: FetchSpec) -> SandboxResult:
+        seen.append(spec.requirements)
+        if "pyspark>=3.2.0" in spec.requirements:
+            return SandboxResult(exit_code=1, stdout="", stderr=no_wheel, duration_seconds=1)
+        return SandboxResult(exit_code=0, stdout="", stderr="", duration_seconds=1)
+
+    monkeypatch.setattr(runner, "fetch", fake_fetch)
+    spec = FetchSpec(IMAGE, Fetcher.PIP, source, "pr-lens-abc", ("pandas", "pyspark>=3.2.0"))
+    result, dropped = await runner.fetch_dropping_unavailable(spec)
+    assert result.outcome is Outcome.PASSED
+    assert dropped == ("pyspark>=3.2.0",)
+    assert seen == [("pandas", "pyspark>=3.2.0"), ("pandas",)]
+
+
+async def test_the_fetch_gives_up_after_dropping_its_limit(
+    source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    requirements = tuple(f"pkg{n}" for n in range(runner.MAX_DROPPED_REQUIREMENTS + 5))
+
+    async def always_missing(spec: FetchSpec) -> SandboxResult:
+        stderr = f"ERROR: No matching distribution found for {spec.requirements[0]}"
+        return SandboxResult(exit_code=1, stdout="", stderr=stderr, duration_seconds=1)
+
+    monkeypatch.setattr(runner, "fetch", always_missing)
+    spec = FetchSpec(IMAGE, Fetcher.PIP, source, "pr-lens-abc", requirements)
+    result, dropped = await runner.fetch_dropping_unavailable(spec)
+    assert result.outcome is Outcome.FAILED
+    assert len(dropped) == runner.MAX_DROPPED_REQUIREMENTS
 
 
 def test_no_status_line_means_the_wrapper_never_reported() -> None:

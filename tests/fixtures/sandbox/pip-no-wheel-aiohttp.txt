@@ -1,0 +1,34 @@
+Ignoring async-timeout: markers 'python_version < "3.11"' don't match your environment
+Ignoring async-timeout: markers 'python_version < "3.11"' don't match your environment
+Collecting pkgconfig
+  Downloading pkgconfig-1.6.0-py3-none-any.whl.metadata (4.9 kB)
+Collecting setuptools>=67.0
+  Downloading setuptools-84.0.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting aiohappyeyeballs>=2.5.0
+  Downloading aiohappyeyeballs-2.7.1-py3-none-any.whl.metadata (5.9 kB)
+Collecting aiosignal>=1.4.0
+  Downloading aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+Collecting frozenlist>=1.1.1
+  Downloading frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (20 kB)
+Collecting multidict<7.0,>=4.5
+  Downloading multidict-6.8.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.3 kB)
+Collecting propcache>=0.2.0
+  Downloading propcache-0.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (16 kB)
+Collecting typing_extensions>=4.4
+  Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting yarl<2.0,>=1.17.0
+  Downloading yarl-1.24.5-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (103 kB)
+Collecting aiodns==4.0.4
+  Downloading aiodns-4.0.4-py3-none-any.whl.metadata (9.0 kB)
+Collecting aiofastnet==1.1.0
+  Downloading aiofastnet-1.1.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (22 kB)
+Collecting annotated-types==0.8.0
+  Downloading annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+Collecting ast-serialize==0.10.0
+  Downloading ast_serialize-0.10.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (1.4 kB)
+Collecting attrs==26.1.0
+  Downloading attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+
+[31mERROR: Could not find a version that satisfies the requirement backports-asyncio-runner==1.2.0 (from versions: none)[0m[31m
+[0m[31mERROR: No matching distribution found for backports-asyncio-runner==1.2.0[0m[31m
+[0mpr-lens-sandbox-status exit=1 setup=- oom_kill=0 peak=95510528
