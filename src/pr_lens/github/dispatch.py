@@ -3,6 +3,8 @@ from typing import Any
 
 import httpx
 
+from pr_lens.github import writes
+
 logger = logging.getLogger(__name__)
 
 API_ROOT = "https://api.github.com"
@@ -32,7 +34,9 @@ class GitHubDispatcher:
 
     async def __call__(self, client_payload: dict[str, Any]) -> None:
         try:
-            response = await self._client.post(
+            response = await writes.send(
+                self._client,
+                "POST",
                 f"{API_ROOT}/repos/{self._repo}/dispatches",
                 json={"event_type": self._event_type, "client_payload": client_payload},
                 headers={

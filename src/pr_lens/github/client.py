@@ -22,7 +22,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -220,8 +220,10 @@ class GitHubClient:
         return response.content, next_url
 
     async def _send(
-        self, method: str, url: str, *, headers: dict[str, str], attempt: int
+        self, method: Literal["GET"], url: str, *, headers: dict[str, str], attempt: int
     ) -> httpx.Response:
+        # GET alone, so the read client cannot be made to write and still typecheck. Writes
+        # go through pr_lens.github.writes, which holds the allowlist.
         while True:
             async with self._gate:
                 try:
