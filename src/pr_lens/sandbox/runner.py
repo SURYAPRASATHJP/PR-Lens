@@ -179,14 +179,16 @@ _STATUS_LINE = re.compile(
     re.MULTILINE,
 )
 
-# Set for every step. A test run that reads HOME or writes a cache gets /tmp, and CI=true
-# is what turns jest and vitest from watch mode into a single run.
+# Set for every step, and deliberately little: every variable here is one the suite under
+# test did not ask for. A run that reads HOME or writes a cache gets /tmp, and CI=true is
+# what CI itself sets and what turns jest and vitest from watch mode into a single run.
+# Colour is left alone. NO_COLOR and FORCE_COLOR=0 were set at first, and the real-data run
+# showed rich-based tools reading FORCE_COLOR=0 as "force a terminal": httpx and tox failed
+# assertions on styling the sandbox had switched on. evidence.py strips colour instead.
 _BASE_ENV: tuple[tuple[str, str], ...] = (
     ("HOME", "/tmp"),
     ("XDG_CACHE_HOME", "/tmp/.cache"),
     ("CI", "true"),
-    ("NO_COLOR", "1"),
-    ("FORCE_COLOR", "0"),
 )
 
 # The fetch step's environment is fixed here, not by the caller. Package manager caches go

@@ -144,6 +144,17 @@ def test_the_job_environment_never_reaches_the_container(
         assert not any("secret-that-must-not-leak" in word for word in argv)
 
 
+def test_the_sandbox_leaves_colour_alone(source: Path) -> None:
+    """FORCE_COLOR=0 switched rich's styling on and failed httpx and tox assertions in the
+    real-data run. The suite's environment is theirs, apart from HOME, caches and CI."""
+    for argv in (
+        runner.run_argv(run_spec(source), NAME),
+        runner.fetch_argv(FetchSpec(IMAGE, Fetcher.PIP, source, "pr-lens-abc"), NAME),
+    ):
+        names = {value.split("=", 1)[0] for value in flag_values(docker_options(argv), "--env")}
+        assert not names & {"NO_COLOR", "FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE"}
+
+
 def test_the_command_is_passed_as_words_after_the_fixed_script(source: Path) -> None:
     spec = run_spec(source, setup=("pip", "install", "."), command=("pytest", "-k", "a b; rm"))
     argv = runner.run_argv(spec, NAME)
