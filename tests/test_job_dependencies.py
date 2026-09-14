@@ -31,6 +31,7 @@ GROUP_MODULES = {
     "retrieval": frozenset(
         {"numpy", "scipy", "torch", "sentence_transformers", "transformers", "pyarrow"}
     ),
+    "sandbox": frozenset({"packaging"}),
 }
 
 PROBE = (
