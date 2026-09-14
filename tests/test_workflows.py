@@ -55,6 +55,23 @@ def test_only_the_image_build_can_write_a_package() -> None:
     assert writers == ["sandbox-images.yml"]
 
 
+def test_the_escape_suite_runs_in_sandbox_yml_against_the_pinned_images() -> None:
+    """The gate. It runs where Docker is certain, it cannot skip itself green, and it runs
+    against the digests every later run pulls, never a laptop's override."""
+    text = workflow("sandbox.yml")
+    assert "uv run pytest -m docker" in text
+    assert re.search(r'^      PR_LENS_REQUIRE_DOCKER: "1"$', text, re.MULTILINE)
+    assert "PR_LENS_TEST_" not in text
+    assert re.search(r"^  packages: read$", text, re.MULTILINE)
+    assert "docker login ghcr.io" in text
+    # The real-data matrix waits for the gate in the same run.
+    assert re.search(r"^    needs: \[escape, repos\]$", text, re.MULTILINE)
+
+
+def test_ci_leaves_the_docker_suite_to_sandbox_yml() -> None:
+    assert 'uv run pytest -m "not docker"' in workflow("ci.yml")
+
+
 def test_no_workflow_caches_the_private_corpus() -> None:
     """The hub cache holds whatever the job downloaded, private corpus shards included, and
     caches on a public repo can be restored by pull request workflows. Cache models by name."""

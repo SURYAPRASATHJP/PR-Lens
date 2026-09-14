@@ -1,0 +1,158 @@
+name: sandbox
+
+# The Phase 3 gate, on the infrastructure it has to hold on: a GitHub-hosted runner, the
+# images pinned in src/pr_lens/sandbox/images.py, pulled from ghcr.io with GITHUB_TOKEN.
+# Docker Hub is not touched here; the images are built by sandbox-images.yml.
+#
+# The escape suite runs on every change to the sandbox. The real-data run, one job per
+# mined repository, is manual, and runs only after the escape suite has passed in the same
+# workflow run, so the table never describes a sandbox the gate did not hold for.
+on:
+  push:
+    paths:
+      - "src/pr_lens/sandbox/**"
+      - "src/pr_lens/jobs/sandbox.py"
+      - "tests/test_sandbox_isolation.py"
+      - ".github/workflows/sandbox.yml"
+  pull_request:
+    paths:
+      - "src/pr_lens/sandbox/**"
+      - "src/pr_lens/jobs/sandbox.py"
+      - "tests/test_sandbox_isolation.py"
+      - ".github/workflows/sandbox.yml"
+  workflow_dispatch:
+    inputs:
+      real_data:
+        description: Also run the sandbox across every mined repository
+        type: boolean
+        default: false
+
+# Read the images, nothing more. Writing a package is sandbox-images.yml's business alone.
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  # A newer push supersedes an older escape run on the same ref. A manual run sits in its
+  # own group, so a push never cancels a real-data run halfway through its matrix.
+  group: sandbox-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  escape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # On the runner a missing Docker daemon fails the gate instead of skipping it green.
+      PR_LENS_REQUIRE_DOCKER: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - name: Log in to ghcr.io
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Docker on this runner
+        run: |
+          version=$(docker version --format 'client {{.Client.Version}}, server {{.Server.Version}}')
+          echo "::notice title=docker::$version on $ImageOS $ImageVersion"
+
+      - name: The escape suite
+        run: |
+          set -o pipefail
+          uv run pytest -m docker -v -p no:cacheprovider 2>&1 | tee escape.log
+
+      - name: Put the result where the public API can read it
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          from pathlib import Path
+          path = Path("escape.log")
+          text = path.read_text(errors="replace")[-20000:] if path.exists() else "no log"
+          escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print("::notice title=escape suite::" + escaped)
+          EOF
+
+  repos:
+    if: github.event_name == 'workflow_dispatch' && inputs.real_data
+    runs-on: ubuntu-latest
+    outputs:
+      repos: ${{ steps.repos.outputs.repos }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen --no-dev --group sandbox
+      - id: repos
+        run: echo "repos=$(uv run --no-sync python -m pr_lens.jobs.sandbox repos)" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: [escape, repos]
+    runs-on: ubuntu-latest
+    # The test run's own wall clock is five minutes and the fetch's ten. This is the
+    # backstop for everything around them.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        repo: ${{ fromJSON(needs.repos.outputs.repos) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen --no-dev --group sandbox
+
+      - name: Log in to ghcr.io
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Run the sandbox on one repository
+        env:
+          SANDBOX_REPO: ${{ matrix.repo }}
+          # Reads the tarball. Never the workflow's GITHUB_TOKEN, which is capped per
+          # repository. The container never sees either: its environment is built
+          # name by name in runner.py.
+          GH_MINING_TOKEN: ${{ secrets.GH_MINING_TOKEN }}
+        run: uv run --no-sync python -m pr_lens.jobs.sandbox run
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: row-${{ strategy.job-index }}
+          path: sandbox-rows/
+          retention-days: 1
+
+  table:
+    needs: run
+    if: always() && needs.run.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen --no-dev --group sandbox
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: row-*
+          path: sandbox-rows
+          merge-multiple: true
+      - name: Render the table
+        run: |
+          uv run --no-sync python -m pr_lens.jobs.sandbox table
+          cat docs/sandbox/phase-3-runs.md >> "$GITHUB_STEP_SUMMARY"
