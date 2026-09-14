@@ -157,6 +157,8 @@ jobs:
           path: sandbox-rows
           merge-multiple: true
       - name: Render the table
+        env:
+          SANDBOX_SOURCE: sandbox.yml run ${{ github.run_id }} at ${{ github.sha }}
         run: |
           uv run --no-sync python -m pr_lens.jobs.sandbox table
           cat docs/sandbox/phase-3-runs.md >> "$GITHUB_STEP_SUMMARY"

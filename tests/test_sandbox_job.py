@@ -223,8 +223,10 @@ def test_the_table_renders_from_rows(tmp_path: Path, monkeypatch: pytest.MonkeyP
     table = tmp_path / "table.md"
     monkeypatch.setenv("SANDBOX_ROWS", str(rows))
     monkeypatch.setenv("SANDBOX_TABLE", str(table))
+    monkeypatch.setenv("SANDBOX_SOURCE", "sandbox.yml run 1 at abc")
     assert job.main(["sandbox", "table"]) == 0
     text = table.read_text()
+    assert "Rows from sandbox.yml run 1 at abc." in text
     assert "| passed | 1 |" in text
     assert "| no_tests | 1 |" in text
     assert "image pull   p50 3.0s" in text
