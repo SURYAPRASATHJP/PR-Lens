@@ -1,0 +1,62 @@
+name: sandbox-images
+
+# Builds the sandbox images and publishes them to ghcr.io. Docker Hub is a build-time
+# dependency only: the base images are pulled here, once per change to a Dockerfile, and
+# never once per review. A hosted runner shares its address with every other job on the
+# pool, and Docker Hub's pull limit is per address, verified 14 Sep 2026.
+#
+# The digest this prints is what src/pr_lens/sandbox/images.py pins. Changing a Dockerfile
+# changes nothing that runs until that file is updated, and updating it re-runs the escape
+# test against the new digest, so the image that ships is the image that was proved.
+on:
+  push:
+    paths:
+      - "sandbox/images/**"
+      - ".github/workflows/sandbox-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # The only job in the repository that may write a package. review.yml and sandbox.yml
+    # read with packages: read, and tests/test_workflows.py holds that line.
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [python, node]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to ghcr.io
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build and push
+        env:
+          # ghcr.io wants the owner in lower case.
+          IMAGE: ghcr.io/suryaprasathjp/pr-lens-sandbox-${{ matrix.image }}
+          CONTEXT: sandbox/images/${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          docker build --pull --tag "$IMAGE:$GITHUB_SHA" "$CONTEXT"
+          docker push "$IMAGE:$GITHUB_SHA"
+          pinned=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$GITHUB_SHA")
+          size=$(docker image inspect --format '{{.Size}}' "$IMAGE:$GITHUB_SHA")
+          echo "pinned $pinned, $size bytes uncompressed"
+          {
+            echo "### ${{ matrix.image }}"
+            echo
+            echo "    $pinned"
+            echo
+            echo "$size bytes uncompressed"
+          } >> "$GITHUB_STEP_SUMMARY"

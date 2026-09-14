@@ -20,6 +20,7 @@ SUFFIXES = frozenset(
 SKIP_DIRECTORIES = frozenset(
     {".git", ".venv", ".cache", ".corpus", ".mypy_cache", ".pytest_cache", ".ruff_cache"}
 )
+NAMES = frozenset({"Dockerfile"})
 SKIP_FILES = frozenset({"uv.lock"})
 
 
@@ -28,7 +29,7 @@ def text_files() -> list[Path]:
         path
         for path in ROOT.rglob("*")
         if path.is_file()
-        and path.suffix in SUFFIXES
+        and (path.suffix in SUFFIXES or path.name in NAMES)
         and path.name not in SKIP_FILES
         and not SKIP_DIRECTORIES.intersection(path.relative_to(ROOT).parts)
         and "__pycache__" not in path.parts
@@ -40,6 +41,7 @@ def test_the_scan_actually_covers_the_repo() -> None:
     assert "README.md" in names
     assert "src/pr_lens/ingest/mine.py" in names
     assert ".github/workflows/ci.yml" in names
+    assert "sandbox/images/python/Dockerfile" in names
 
 
 def test_no_file_contains_an_em_or_en_dash() -> None:

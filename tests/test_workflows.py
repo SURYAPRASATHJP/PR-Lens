@@ -44,6 +44,17 @@ def test_every_phase_2_matrix_fits_in_one_workflow_run() -> None:
         assert 0 < len(build()) <= 256
 
 
+def test_only_the_image_build_can_write_a_package() -> None:
+    """A workflow that runs repository code with packages: write could overwrite the image
+    the escape test proved. Publishing is one job's business."""
+    writers = sorted(
+        path.name
+        for path in WORKFLOWS.glob("*.yml")
+        if re.search(r"packages:\s*write", path.read_text(encoding="utf-8"))
+    )
+    assert writers == ["sandbox-images.yml"]
+
+
 def test_no_workflow_caches_the_private_corpus() -> None:
     """The hub cache holds whatever the job downloaded, private corpus shards included, and
     caches on a public repo can be restored by pull request workflows. Cache models by name."""
