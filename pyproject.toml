@@ -92,7 +92,10 @@ ignore = ["S101"]  # pytest needs assert
 # not need async file IO.
 # Fixture secrets are not credentials; a test reading a temp file it just wrote does not
 # need async file IO; and the one subprocess call runs this interpreter on a literal.
-"tests/*" = ["S105", "S106", "ASYNC240", "S603"]
+"tests/*" = ["S105", "S106", "ASYNC240", "S603", "S108"]
+# Every /tmp in the sandbox is a path inside the container, a tmpfs this code sized and
+# mounted, never a shared temporary directory on the host.
+"src/pr_lens/sandbox/*" = ["S108"]
 
 [tool.mypy]
 strict = true
