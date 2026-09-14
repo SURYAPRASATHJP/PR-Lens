@@ -1,0 +1,19 @@
+
+> demo@1.0.0 test
+> vitest run
+
+
+ RUN  v5.0.0 /work
+
+ ❯ sum.test.js (4 tests | 3 failed) 6ms
+   ❯ sum (2)
+     ✓ adds small numbers 1ms
+     × adds negative numbers 3ms
+   × parse rejects garbage 1ms
+   × throws on purpose 0ms
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 1 passed (4)
+   Start at  20:39:49
+   Duration  145ms (transform 47%, import 26%, tests 17%, worker 9%)
+

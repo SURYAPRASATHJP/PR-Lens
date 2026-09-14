@@ -1,0 +1,35 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+rootdir: /work
+collected 5 items
+
+tests/test_math.py .FFEF                                                 [100%]
+
+==================================== ERRORS ====================================
+______________________ ERROR at setup of test_uses_broken ______________________
+tests/test_math.py:22: in broken
+    raise RuntimeError("fixture exploded")
+E   RuntimeError: fixture exploded
+=================================== FAILURES ===================================
+__________________________________ test_wrong __________________________________
+tests/test_math.py:13: in test_wrong
+    assert add(2, 2) == 5
+E   assert 4 == 5
+E    +  where 4 = add(2, 2)
+_________________________________ test_raises __________________________________
+tests/test_math.py:17: in test_raises
+    raise ValueError("bad input: 42")
+E   ValueError: bad input: 42
+____________________________ TestThing.test_method _____________________________
+tests/test_math.py:31: in test_method
+    assert [1, 2] == [1, 3]
+E   assert [1, 2] == [1, 3]
+E     
+E     At index 1 diff: 2 != 3
+E     Use -v to get more diff
+=========================== short test summary info ============================
+FAILED tests/test_math.py::test_wrong - assert 4 == 5
+FAILED tests/test_math.py::test_raises - ValueError: bad input: 42
+FAILED tests/test_math.py::TestThing::test_method - assert [1, 2] == [1, 3]
+ERROR tests/test_math.py::test_uses_broken - RuntimeError: fixture exploded
+===================== 3 failed, 1 passed, 1 error in 0.02s =====================

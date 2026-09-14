@@ -1,0 +1,55 @@
+FAIL ./sum.test.js
+  ✕ parse rejects garbage (1 ms)
+  ✕ throws on purpose
+  sum
+    ✓ adds small numbers (2 ms)
+    ✕ adds negative numbers (1 ms)
+
+  ● sum › adds negative numbers
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: -4
+    Received: -3
+
+       6 |   });
+       7 |   test('adds negative numbers', () => {
+    >  8 |     expect(sum(-1, -2)).toBe(-4);
+         |                         ^
+       9 |   });
+      10 | });
+      11 | test('parse rejects garbage', () => {
+
+      at Object.toBe (sum.test.js:8:25)
+
+  ● parse rejects garbage
+
+    SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)
+        at JSON.parse (<anonymous>)
+
+      1 | exports.sum = (a, b) => a + b;
+    > 2 | exports.parse = (s) => JSON.parse(s);
+        |                             ^
+      3 |
+
+      at parse (sum.js:2:29)
+      at Object.parse (sum.test.js:12:10)
+
+  ● throws on purpose
+
+    TypeError: config.port is undefined
+
+      13 | });
+      14 | test('throws on purpose', () => {
+    > 15 |   throw new TypeError('config.port is undefined');
+         |         ^
+      16 | });
+      17 |
+
+      at Object.<anonymous> (sum.test.js:15:9)
+
+Test Suites: 1 failed, 1 total
+Tests:       3 failed, 1 passed, 4 total
+Snapshots:   0 total
+Time:        0.497 s
+Ran all test suites.
