@@ -56,7 +56,9 @@ jobs:
         run: uv run mypy .
 
       - name: pytest
-        run: uv run pytest
+        # The docker-marked escape suite is sandbox.yml's, where it runs against the pinned
+        # images with packages: read and cannot skip itself green.
+        run: uv run pytest -m "not docker"
 
       - name: requirements.txt matches the lockfile
         # Vercel installs from requirements.txt, not from uv.lock. If they drift, the

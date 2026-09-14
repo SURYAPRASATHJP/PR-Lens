@@ -118,3 +118,6 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "docker: needs a Docker daemon. The Phase 3 escape suite, run by sandbox.yml, not ci.yml",
+]
