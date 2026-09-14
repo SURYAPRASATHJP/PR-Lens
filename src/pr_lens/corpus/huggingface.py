@@ -30,7 +30,23 @@ MAX_FILES_PER_COMMIT = 100
 
 # Busy, not wrong: rate limited, conflicting with a concurrent commit, or a server error.
 RETRYABLE_STATUSES = frozenset({409, 412, 429, 500, 502, 503, 504})
-COMMIT_ATTEMPTS = 6
+COMMIT_ATTEMPTS = 8
+COMMIT_BACKOFF_BASE = 10.0
+COMMIT_BACKOFF_CAP = 300.0
+
+
+def _backoff(attempt: int) -> float:
+    """Exponential backoff spread across half to one and a half times the base wait.
+
+    The jitter has to be proportional, not a few seconds bolted on the end. The embed
+    matrix runs twenty jobs that finish within seconds of each other and commit to one
+    dataset repo, so when the Hub rate limits them it rate limits all twenty at once. A
+    fixed five second jitter on a hundred and sixty second wait leaves them retrying in
+    near lockstep, and they collide again. Two strawberry parts died that way on
+    2026-09-14 after exhausting six attempts.
+    """
+    base = min(COMMIT_BACKOFF_CAP, COMMIT_BACKOFF_BASE * 2**attempt)
+    return base * (0.5 + random.random())  # noqa: S311 -- jitter, not cryptography
 
 
 class HuggingFaceSink:
@@ -101,6 +117,6 @@ class HuggingFaceSink:
                 status = exc.response.status_code if exc.response is not None else 0
                 if status not in RETRYABLE_STATUSES or attempt == COMMIT_ATTEMPTS - 1:
                     raise
-                wait = min(300.0, 10.0 * 2**attempt) + random.random() * 5  # noqa: S311 -- jitter
+                wait = _backoff(attempt)
                 logger.warning("the Hub returned %s, retrying the commit in %.0fs", status, wait)
                 time.sleep(wait)

@@ -113,3 +113,29 @@ def test_a_shard_rolls_over_at_the_row_limit(
 
 def test_the_row_count_is_the_number_of_units(tmp_path: Path) -> None:
     assert write_units(LocalSink(tmp_path), "octocat/hello-world", units(7)).rows == 7
+
+
+def test_commit_backoff_grows_and_is_capped() -> None:
+    """Base wait doubles per attempt and stops at the cap, so a retry storm cannot run away."""
+    from pr_lens.corpus.huggingface import COMMIT_BACKOFF_CAP, _backoff
+
+    for attempt in range(8):
+        base = min(COMMIT_BACKOFF_CAP, 10.0 * 2**attempt)
+        for _ in range(50):
+            wait = _backoff(attempt)
+            assert 0.5 * base <= wait <= 1.5 * base
+    assert all(_backoff(20) <= 1.5 * COMMIT_BACKOFF_CAP for _ in range(50))
+
+
+def test_commit_backoff_decorrelates_a_herd() -> None:
+    """Twenty jobs rate limited at the same instant must not retry at the same instant.
+
+    This is the bug that killed five embed parts on 2026-09-14. A fixed few seconds of
+    jitter on a 160 second wait is noise, so the whole matrix retried together and was
+    throttled together. Proportional jitter is what actually spreads them out, and the
+    spread has to be a meaningful fraction of the wait to be worth anything.
+    """
+    from pr_lens.corpus.huggingface import _backoff
+
+    waits = sorted(_backoff(4) for _ in range(20))
+    assert waits[-1] - waits[0] > 0.5 * min(300.0, 10.0 * 2**4)
