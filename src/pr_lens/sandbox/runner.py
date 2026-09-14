@@ -135,6 +135,7 @@ _FETCH_SCRIPT = (
     + rf"""
 fetch() {{
   set -e
+  mkdir -p "$TMPDIR"
   fetcher=$1
   shift
   case "$fetcher" in
@@ -201,6 +202,9 @@ _FETCH_ENV: tuple[tuple[str, str], ...] = (
     # On the volume, so a fetch retried after dropping a requirement does not download
     # everything again.
     ("PIP_CACHE_DIR", f"{DEPS_MOUNT}/.pip-cache"),
+    # pip and npm unpack into the temp directory before they install. On /tmp that is the
+    # 256 MB memory tmpfs, and fsspec's fetch died there with ENOSPC, 14 Sep 2026.
+    ("TMPDIR", f"{DEPS_MOUNT}/.tmp"),
 )
 
 # How many requirements a fetch may drop before it gives up and reports the failure.

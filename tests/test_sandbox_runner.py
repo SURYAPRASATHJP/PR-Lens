@@ -171,6 +171,13 @@ def test_the_fetch_step_runs_only_the_package_manager_it_names(source: Path) -> 
     assert after_image[3:] == ["pr-lens-fetch", "pip", "requests>=2", "rich"]
 
 
+def test_the_fetch_unpacks_on_disk_not_in_the_memory_tmpfs(source: Path) -> None:
+    """fsspec's first real fetch ran /tmp out of space unpacking wheels."""
+    argv = runner.fetch_argv(FetchSpec(IMAGE, Fetcher.PIP, source, "pr-lens-abc"), NAME)
+    assert "TMPDIR=/deps/.tmp" in flag_values(docker_options(argv), "--env")
+    assert 'mkdir -p "$TMPDIR"' in runner._FETCH_SCRIPT
+
+
 def test_the_fetch_script_never_builds_or_runs_anything_it_downloads() -> None:
     script = runner._FETCH_SCRIPT
     assert "--only-binary=:all:" in script
