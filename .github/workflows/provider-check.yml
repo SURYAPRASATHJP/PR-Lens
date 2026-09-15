@@ -1,9 +1,18 @@
 name: provider-check
 
-# On demand only. Asks each inference provider whose key is set whether it honours a strict
-# JSON schema and whether a call sized to the per-call token budget gets through, and writes
-# the answers to the job summary. A few thousand tokens of the daily allowance per provider.
+# Asks each inference provider whose key is set whether it honours a strict JSON schema and
+# whether a call sized to the per-call token budget gets through, and writes the answers to
+# the job summary. A few thousand tokens of the daily allowance per provider.
+#
+# Also on a push that changes the provider, because workflow_dispatch needs the workflow on
+# the default branch and the answer is wanted before merging. Never for a pull request,
+# whose runs get no secrets when they come from a fork.
 on:
+  push:
+    paths:
+      - "src/pr_lens/review/provider.py"
+      - "src/pr_lens/jobs/provider_check.py"
+      - ".github/workflows/provider-check.yml"
   workflow_dispatch:
 
 permissions:
