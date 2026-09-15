@@ -41,6 +41,9 @@ class EvalDocument:
     # Set for review comments only. Every other kind is the same under both
     # serialisations, which is what "everything else about the index is unchanged" means.
     body: str | None = None
+    # Also review comments only: the pull request the comment was left on, which is the
+    # nearest thing the corpus has to a timestamp. Review uses it as the replay cutoff.
+    pull_request_number: int | None = None
 
     def serialised(self, serialisation: Serialisation) -> str:
         if serialisation == "body_only" and self.body is not None:
@@ -63,6 +66,15 @@ def load_repo(store: ShardStore, repo: str) -> RepoCorpus:
     included, carries it, and is stale the moment the corpus moves.
     """
     require_tune([repo])
+    return read_corpus(store, repo)
+
+
+def read_corpus(store: ShardStore, repo: str) -> RepoCorpus:
+    """The shards of any repo, with no split rule applied.
+
+    The rule is the caller's: load_repo admits the tune split alone, and review.retrieve
+    refuses the holdout. Nothing else should call this directly.
+    """
     manifest = store.read_manifest(repo_slug(repo))
     if not manifest:
         raise FileNotFoundError(f"no corpus manifest for {repo}. Has it been mined?")
@@ -122,4 +134,10 @@ def _document(record: dict[str, Any]) -> EvalDocument:
         content_hash=str(record["content_hash"]),
         text=str(record["text"]),
         body=body_only(record) if kind == "review_comment" else None,
+        pull_request_number=_pull_request_number(record) if kind == "review_comment" else None,
     )
+
+
+def _pull_request_number(record: dict[str, Any]) -> int | None:
+    number = record.get("metadata", {}).get("pull_request_number")
+    return number if isinstance(number, int) else None
