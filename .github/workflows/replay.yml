@@ -1,0 +1,71 @@
+name: replay
+
+# Drafts over merged pull requests from the tune repos, for the keep-or-kill loop. Never
+# posts: this workflow holds no App key and no write permission, and test_workflows.py
+# fails the suite if either appears. The credential is the enforcer, not the code.
+#
+# Started by pushing a branch named replay/<batch>, because workflow_dispatch needs the
+# workflow on the default branch, and a push that merely touched review code must never
+# spend the day's tokens. The batch is the branch name after replay/. From the Actions tab
+# once this is on main.
+on:
+  push:
+    branches: ["replay/**"]
+  workflow_dispatch:
+    inputs:
+      batch:
+        description: Batch name. Re-running a batch carries on where it stopped.
+        required: true
+      pulls:
+        description: Pull requests to draft
+        default: "15"
+
+permissions:
+  contents: read
+
+env:
+  BATCH: ${{ inputs.batch || github.ref_name }}
+  HF_HUB_DISABLE_PROGRESS_BARS: "1"
+
+concurrency:
+  # One job per batch. The review_runs claim already stops two jobs drafting one pull
+  # request, and this keeps them from racing through the same batch at all.
+  group: replay-${{ inputs.batch || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    # Fifteen pull requests at a minute or two each, including the waits for the
+    # per-minute token window, plus loading the model and each repo's index.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen --no-dev --group db --group ingest --group retrieval
+
+      # The model weights only, named. Never the whole hub cache, which also holds the
+      # private corpus shards this job downloads, and caches on a public repo can be
+      # restored by pull request workflows.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-modernbert-base
+          key: hf-models-gte-${{ hashFiles('src/pr_lens/retrieval/embed.py') }}
+
+      - name: Draft the batch
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GH_MINING_TOKEN: ${{ secrets.GH_MINING_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          PULLS: ${{ inputs.pulls || '15' }}
+        run: uv run --no-dev python -m pr_lens.jobs.replay --batch "${BATCH#replay/}" --pulls "$PULLS"

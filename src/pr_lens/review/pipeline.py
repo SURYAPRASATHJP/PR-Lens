@@ -58,6 +58,8 @@ FILTER_COMPLETION_TOKENS = 1000
 
 
 class NoComment(StrEnum):
+    # The pull request could not be read: a deleted head commit, a vanished repository.
+    FETCH_FAILED = "fetch_failed"
     NOTHING_REVIEWABLE = "nothing_reviewable"
     TOO_LARGE = "too_large"
     MODEL_SILENT = "model_silent"

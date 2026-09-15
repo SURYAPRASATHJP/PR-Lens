@@ -38,6 +38,26 @@ def test_review_runs_once_per_pull_request_and_the_newest_wins() -> None:
     assert re.search(r"^  cancel-in-progress: true\s*$", text, re.MULTILINE)
 
 
+def test_replay_holds_no_credential_that_could_post() -> None:
+    """Replay never posts, and this is what makes that true rather than intended: without
+    the App key it cannot mint an installation token, and without write permission its
+    own token cannot comment either."""
+    text = workflow("replay.yml")
+    assert "GH_APP_" not in text
+    assert "create-github-app-token" not in text
+    assert not re.search(r"^\s+\S+:\s*write\s*$", text, re.MULTILINE)
+    assert re.search(r"^permissions:\n  contents: read\n\n", text, re.MULTILINE)
+
+
+def test_replay_only_starts_from_a_replay_branch_or_by_hand() -> None:
+    """A push that merely touched review code must never spend the day's tokens."""
+    text = workflow("replay.yml")
+    on = text[text.index("\non:") : text.index("\npermissions:")]
+    assert 'branches: ["replay/**"]' in on
+    assert "paths:" not in on
+    assert "pull_request" not in on
+
+
 def test_every_phase_2_matrix_fits_in_one_workflow_run() -> None:
     """GitHub refuses a matrix of more than 256 jobs. Better to fail here than at dispatch."""
     for build in MATRICES.values():

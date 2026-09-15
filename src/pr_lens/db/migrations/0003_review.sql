@@ -34,6 +34,10 @@ create table if not exists review_runs (
     provider          text,
     model             text,
     timings           jsonb       not null default '{}'::jsonb,
+    -- Replay only: the human review comments left on this pull request, shown beside the
+    -- drafts in the keep-or-kill file. The answer key, so it is stored here and never
+    -- passed to the pipeline, which has no parameter that could carry it.
+    reference         jsonb       not null default '[]'::jsonb,
     started_at        timestamptz not null default now(),
     check ((mode = 'live') = (delivery_id is not null)),
     check ((mode = 'replay') = (batch is not null))

@@ -31,7 +31,9 @@ update review_runs set
     completion_tokens = $10,
     provider = $11,
     model = $12,
-    timings = $13::jsonb
+    timings = $13::jsonb,
+    reference = $14::jsonb,
+    head_sha = coalesce(nullif($15, ''), head_sha)
 where run_id = $1
 """
 
@@ -44,7 +46,8 @@ insert into drafts (
 
 _BATCH_DRAFTS = """
 select d.draft_id, d.path, d.line, d.body, d.evidence, d.critique, d.fate, d.filter_reason,
-       d.verdict, d.verdict_reason, r.repo, r.pr_number, r.head_sha, r.plan
+       d.verdict, d.verdict_reason, r.run_id, r.repo, r.pr_number, r.head_sha, r.plan,
+       r.reference
 from drafts d join review_runs r using (run_id)
 where r.batch = $1
 order by r.repo, r.pr_number, d.position
@@ -75,9 +78,16 @@ async def claim(
 
 
 async def finish(
-    conn: asyncpg.Connection, run_id: int, review: Review, timings: Mapping[str, float]
+    conn: asyncpg.Connection,
+    run_id: int,
+    review: Review,
+    timings: Mapping[str, float],
+    reference: Sequence[Mapping[str, object]] = (),
+    *,
+    head_sha: str = "",
 ) -> None:
-    """The result and every draft with its fate, together or not at all."""
+    """The result and every draft with its fate, together or not at all. A head_sha given
+    here replaces the one claimed with, since replay claims before it has read the pull."""
     first = review.calls[0] if review.calls else None
     async with conn.transaction():
         await conn.execute(
@@ -95,6 +105,8 @@ async def finish(
             first.provider if first else None,
             first.model if first else None,
             json.dumps({stage: round(seconds, 3) for stage, seconds in timings.items()}),
+            json.dumps(list(reference)),
+            head_sha,
         )
         await conn.executemany(
             _DRAFT,
@@ -118,8 +130,25 @@ async def finish(
         )
 
 
+async def release(conn: asyncpg.Connection, run_id: int) -> None:
+    """Give back a claim that spent nothing, so a later run can take the pull request."""
+    await conn.execute("delete from review_runs where run_id = $1 and finished_at is null", run_id)
+
+
 async def batch_drafts(conn: asyncpg.Connection, batch: str) -> list[asyncpg.Record]:
     return list(await conn.fetch(_BATCH_DRAFTS, batch))
+
+
+async def replayed_elsewhere(conn: asyncpg.Connection, batch: str) -> set[tuple[str, int]]:
+    """Every pull request another replay batch has drafted, so a new batch reads new ones.
+
+    Not this batch's own: a re-run of a half-finished batch has to choose the same pull
+    requests again, and the claim is what skips the ones already drafted.
+    """
+    rows = await conn.fetch(
+        "select repo, pr_number from review_runs where mode = 'replay' and batch <> $1", batch
+    )
+    return {(row["repo"], row["pr_number"]) for row in rows}
 
 
 async def record_verdicts(
