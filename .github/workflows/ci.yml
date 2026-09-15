@@ -2,7 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    # Phase branches too, so the Postgres tests run against the service container before a
+    # merge rather than after one. Nothing here holds a secret.
+    branches: [main, "phase-*"]
   pull_request:
   workflow_dispatch:
 
