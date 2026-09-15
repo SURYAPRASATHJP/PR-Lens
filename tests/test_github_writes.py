@@ -99,6 +99,8 @@ KNOWN_CALLS = {
     ("github/client.py", "self._client.request"),
     # The chokepoint itself.
     ("github/writes.py", "client.request"),
+    # The inference call to Groq, OpenRouter or NIM. ChatClient refuses a GitHub host.
+    ("review/provider.py", "self._client.post"),
 }
 
 

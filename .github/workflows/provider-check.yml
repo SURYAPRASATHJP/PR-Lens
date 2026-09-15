@@ -1,0 +1,37 @@
+name: provider-check
+
+# On demand only. Asks each inference provider whose key is set whether it honours a strict
+# JSON schema and whether a call sized to the per-call token budget gets through, and writes
+# the answers to the job summary. A few thousand tokens of the daily allowance per provider.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen --no-dev
+
+      - name: Ask the providers
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: uv run --no-dev python -m pr_lens.jobs.provider_check
