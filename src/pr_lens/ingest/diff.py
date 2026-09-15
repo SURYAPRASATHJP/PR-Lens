@@ -94,6 +94,7 @@ def _parse(text: str, *, default_path: str | None) -> list[Hunk]:
     path = default_path
     header: re.Match[str] | None = None
     body: list[str] = []
+    old_left = new_left = 0
 
     def flush() -> None:
         if header is None:
@@ -114,33 +115,41 @@ def _parse(text: str, *, default_path: str | None) -> list[Hunk]:
         )
 
     for line in text.splitlines():
-        file_header = _FILE_HEADER.match(line)
-        if file_header and header is None:
-            path = file_header["path"] if file_header["path"] != "/dev/null" else None
+        if header is not None and (old_left > 0 or new_left > 0):
+            # Inside a hunk the header's counts decide what is content, never the text. A
+            # removed line reading "-- note" arrives as "--- note" and an added "++ x" as
+            # "+++ x", and taking either for the next file's header cuts the hunk short
+            # and shifts every line number after it.
+            body.append(line)
+            marker = line[:1]
+            if marker == "-":
+                old_left -= 1
+            elif marker == "+":
+                new_left -= 1
+            elif marker != "\\":
+                old_left -= 1
+                new_left -= 1
+            continue
+
+        if header is not None and line.startswith("\\"):
+            # "\ No newline at end of file" trails the hunk's last counted line.
+            body.append(line)
             continue
 
         match = _HEADER.match(line)
         if match:
             flush()
             header, body = match, []
+            old_left = int(match["old_lines"] or 1)
+            new_left = int(match["new_lines"] or 1)
             continue
 
-        if header is None:
-            # Still in the "diff --git", "index", "---" preamble.
-            if file_header:
-                path = file_header["path"] if file_header["path"] != "/dev/null" else None
-            continue
-
-        if line.startswith(("diff --git ", "--- ", "+++ ")):
-            flush()
-            header, body = None, []
-            if line.startswith("+++ "):
-                new_path = _FILE_HEADER.match(line)
-                if new_path:
-                    path = new_path["path"] if new_path["path"] != "/dev/null" else None
-            continue
-
-        body.append(line)
+        # Past the counted lines, so this is preamble: "diff --git", "index", "---", "+++".
+        flush()
+        header, body = None, []
+        file_header = _FILE_HEADER.match(line)
+        if file_header:
+            path = file_header["path"] if file_header["path"] != "/dev/null" else None
 
     flush()
     return hunks

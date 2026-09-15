@@ -76,6 +76,45 @@ def test_a_review_comments_truncated_hunk_is_kept_as_sent() -> None:
     assert hunk.added() == [(41, "    added")]
 
 
+def test_a_removed_sql_comment_is_content_not_a_file_header() -> None:
+    """A removed "-- note" arrives as "--- note". Read as a header it cut the hunk short and
+    every comment anchored below it landed on the wrong line."""
+    patch = "@@ -1,3 +1,3 @@\n select 1;\n--- old note\n+-- new note\n from t;\n"
+    hunk = parse_patch(patch, "q.sql")[0]
+    assert len(hunk.lines) == 4
+    assert hunk.removed() == ["-- old note"]
+    assert hunk.new_file_lines() == [(1, "select 1;"), (2, "-- new note"), (3, "from t;")]
+
+
+def test_an_added_line_starting_with_plus_signs_does_not_start_a_new_file() -> None:
+    diff = (
+        "diff --git a/c.py b/c.py\n"
+        "--- a/c.py\n"
+        "+++ b/c.py\n"
+        "@@ -1,1 +1,3 @@\n"
+        " x = 1\n"
+        "+++ counter\n"
+        "+y = 2\n"
+        "diff --git a/d.py b/d.py\n"
+        "--- a/d.py\n"
+        "+++ b/d.py\n"
+        "@@ -4 +4 @@\n"
+        "-a\n"
+        "+b\n"
+    )
+    hunks = parse_diff(diff)
+    assert [h.path for h in hunks] == ["c.py", "d.py"]
+    assert hunks[0].added() == [(2, "++ counter"), (3, "y = 2")]
+    assert hunks[1].added() == [(4, "b")]
+
+
+def test_consecutive_hunks_in_one_patch_stay_separate() -> None:
+    patch = "@@ -1,2 +1,2 @@\n a\n-b\n+c\n@@ -10 +10,2 @@\n z\n+w\n"
+    first, second = parse_patch(patch, "x.py")
+    assert first.added() == [(2, "c")]
+    assert second.added() == [(11, "w")]
+
+
 def test_text_round_trips_a_hunk() -> None:
     hunk = parse_patch(PATCH, "x.py")[0]
     assert hunk.text.startswith("@@ -10,3 +10,4 @@ def parse(self):")
