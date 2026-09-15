@@ -379,3 +379,120 @@ def test_the_pinned_images_are_real_digests() -> None:
         digest = image.split("@sha256:")[1]
         assert len(digest) == 64
         assert set(digest) != {"0"}
+
+
+# The Phase 3 dependency review's asymmetry: pip requirements naming a URL were refused,
+# while a JS lockfile naming one was honoured by a fetch step that has network.
+
+LEFT_PAD = "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"
+NPM_LOCK = {
+    "lockfileVersion": 3,
+    "packages": {
+        "": {"name": "demo"},
+        "node_modules/left-pad": {"version": "1.3.0", "resolved": LEFT_PAD},
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("files", "named"),
+    [
+        (
+            {
+                "package-lock.json": json.dumps(
+                    {
+                        "lockfileVersion": 3,
+                        "packages": {
+                            "node_modules/evil": {
+                                "resolved": "git+ssh://git@example.com/evil.git#abc",
+                            }
+                        },
+                    }
+                )
+            },
+            "node_modules/evil from git+ssh://git@example.com/evil.git#abc",
+        ),
+        (
+            {
+                "package-lock.json": json.dumps(
+                    {
+                        "lockfileVersion": 1,
+                        "dependencies": {
+                            "mirror": {"resolved": "https://registry.npmmirror.com/m.tgz"}
+                        },
+                    }
+                )
+            },
+            "mirror from https://registry.npmmirror.com/m.tgz",
+        ),
+        (
+            {
+                "pnpm-lock.yaml": "packages:\n  /tool@1.0.0:\n    resolution: "
+                "{tarball: https://codeload.github.com/o/tool/tar.gz/abc}\n"
+            },
+            "tarball https://codeload.github.com/o/tool/tar.gz/abc",
+        ),
+        (
+            {
+                "yarn.lock": '# yarn lockfile v1\n\ntool@^1:\n  version "1.0.0"\n'
+                '  resolved "https://evil.example/tool-1.0.0.tgz#abc"\n'
+            },
+            "resolved https://evil.example/tool-1.0.0.tgz#abc",
+        ),
+    ],
+    ids=["npm git", "npm v1 mirror", "pnpm tarball", "yarn host"],
+)
+def test_a_lockfile_resolving_outside_the_registry_is_not_fetched(
+    tmp_path: Path, files: dict[str, str], named: str
+) -> None:
+    detection = detect(write(tmp_path, {"package.json": package(), **files}))
+    assert not detection.found
+    assert "outside the public registry" in detection.reason
+    assert named in detection.reason
+
+
+@pytest.mark.parametrize(
+    "spec", ["github:o/tool", "o/tool", "git+https://example.com/t.git", "https://x.example/t.tgz"]
+)
+def test_package_json_naming_a_remote_source_is_not_fetched(tmp_path: Path, spec: str) -> None:
+    """With no lockfile npm install resolves package.json itself, so it is read too."""
+    detection = detect(write(tmp_path, {"package.json": package(dependencies={"tool": spec})}))
+    assert not detection.found
+    assert f"tool from {spec}" in detection.reason
+
+
+def test_registry_and_local_sources_are_fetched_as_before(tmp_path: Path) -> None:
+    deps = {"left-pad": "^1.3.0", "alias": "npm:@scope/real@2", "local": "file:../local"}
+    root = write(
+        tmp_path,
+        {
+            "package.json": package(dependencies=deps, devDependencies={"ws": "workspace:*"}),
+            "package-lock.json": json.dumps(NPM_LOCK),
+        },
+    )
+    detection = detect(root)
+    assert detection.found
+    assert detection.fetcher is Fetcher.NPM_CI
+
+
+def test_a_lockfile_over_the_manifest_cap_is_still_checked(tmp_path: Path) -> None:
+    """A real package-lock.json is often past the 1 MB manifest cap. Skipping it would pass
+    an unchecked lockfile, which is the hole this check exists to close."""
+    lock = {
+        "lockfileVersion": 3,
+        "packages": {
+            **{
+                f"node_modules/p{n}": {
+                    "resolved": LEFT_PAD,
+                    "pad": "x" * 200,
+                }
+                for n in range(6000)
+            },
+            "node_modules/evil": {"resolved": "https://evil.example/e.tgz"},
+        },
+    }
+    text = json.dumps(lock)
+    assert len(text) > 1_000_000
+    detection = detect(write(tmp_path, {"package.json": package(), "package-lock.json": text}))
+    assert not detection.found
+    assert "node_modules/evil from https://evil.example/e.tgz" in detection.reason

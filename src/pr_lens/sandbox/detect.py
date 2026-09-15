@@ -110,6 +110,9 @@ _NPM_PLACEHOLDER = re.compile(r"no test specified")
 # A walk is bounded so a pathological repository costs a bounded amount to look at.
 MAX_FILES_SCANNED = 50_000
 MAX_MANIFEST_BYTES = 1_000_000
+# Lockfiles are read for where they resolve, and a real package-lock.json is often several
+# megabytes. One too large to read cannot be checked, so it is refused rather than trusted.
+MAX_LOCKFILE_BYTES = 50_000_000
 
 _SKIP_DIRS = frozenset(
     {
@@ -206,8 +209,8 @@ def _scan(root: Path) -> _Tree:
     return tree
 
 
-def _read(path: Path) -> str | None:
-    if not path.is_file() or path.stat().st_size > MAX_MANIFEST_BYTES:
+def _read(path: Path, limit: int = MAX_MANIFEST_BYTES) -> str | None:
+    if not path.is_file() or path.stat().st_size > limit:
         return None
     return path.read_text(encoding="utf-8", errors="replace")
 
@@ -556,6 +559,15 @@ def _detect_javascript(root: Path, tree: _Tree) -> Detection | None:
             notes=(why,),
         )
 
+    foreign = _foreign_sources(root, package, manager)
+    if foreign:
+        shown = ", ".join(foreign[:3]) + (" and more" if len(foreign) > 3 else "")
+        return Detection(
+            reason="dependencies resolve outside the public registry, and the fetch step has "
+            f"network, so the repository would choose where it connects; not run: {shown}",
+            notes=(why,),
+        )
+
     if manager == "npm":
         fetcher = Fetcher.NPM_CI if "npm" in present else Fetcher.NPM_INSTALL
     else:
@@ -606,6 +618,86 @@ def _is_yarn_berry(root: Path, declared: tuple[str, str] | None) -> bool:
         return True
     lock = _read(root / "yarn.lock") or ""
     return "__metadata:" in lock[:2000]
+
+
+# Where a JS fetch may connect. The Python side holds the same line in check_requirement,
+# which refuses a requirement naming a URL. Found by the Phase 3 dependency review, 14 Sep
+# 2026: --ignore-scripts stops code running, but npm still honours a git+https, a tarball
+# URL or a mirror named in package.json or the lockfile, which lets the repository under
+# review choose an outbound destination from inside the runner's network.
+PUBLIC_REGISTRIES = ("https://registry.npmjs.org/", "https://registry.yarnpkg.com/")
+
+# Specs npm resolves somewhere other than the registry, over the network. file:, link: and
+# workspace: are paths inside the checkout and fetch nothing.
+_REMOTE_SPEC = re.compile(r"^(https?:|git[:+]|ssh:|github:|gitlab:|bitbucket:|gist:)")
+# npm reads a bare user/repo as a GitHub dependency. A scoped name starts with @.
+_GITHUB_SHORTHAND = re.compile(r"^[\w.-]+/[\w.-]+(#.*)?$")
+_YARN_RESOLVED = re.compile(r'^\s+resolved\s+"?([^"\s]+)"?\s*$', re.MULTILINE)
+_PNPM_REMOTE = re.compile(r"\b(tarball|repo):\s*([^\s,}]+)")
+
+
+def _foreign_sources(root: Path, package: dict[str, Any], manager: str) -> list[str]:
+    """Every dependency that would be fetched from somewhere other than a public registry."""
+    found: list[str] = []
+    for key in ("dependencies", "devDependencies", "optionalDependencies"):
+        table = package.get(key)
+        if not isinstance(table, dict):
+            continue
+        for name, spec in table.items():
+            if isinstance(spec, str) and (
+                _REMOTE_SPEC.match(spec) or _GITHUB_SHORTHAND.match(spec)
+            ):
+                found.append(f"{name} from {spec}")
+
+    for name, owner in _LOCKFILES:
+        path = root / name
+        if owner == manager and path.is_file() and path.stat().st_size > MAX_LOCKFILE_BYTES:
+            found.append(f"{name} is too large to check")
+    if manager == "npm":
+        for name in ("package-lock.json", "npm-shrinkwrap.json"):
+            text = _read(root / name, MAX_LOCKFILE_BYTES)
+            if text is None:
+                continue
+            try:
+                lock: Any = json.loads(text)
+            except json.JSONDecodeError:
+                found.append(f"{name} is not valid JSON")
+                continue
+            found += [
+                f"{where} from {url}"
+                for where, url in _resolved(lock)
+                if not url.startswith(PUBLIC_REGISTRIES)
+            ]
+    elif manager == "pnpm":
+        text = _read(root / "pnpm-lock.yaml", MAX_LOCKFILE_BYTES) or ""
+        found += [
+            f"{kind} {url}"
+            for kind, url in _PNPM_REMOTE.findall(text)
+            if not url.startswith(PUBLIC_REGISTRIES)
+        ]
+    elif manager == "yarn":
+        text = _read(root / "yarn.lock", MAX_LOCKFILE_BYTES) or ""
+        found += [
+            f"resolved {url}"
+            for url in _YARN_RESOLVED.findall(text)
+            if not url.startswith(PUBLIC_REGISTRIES)
+        ]
+    return found
+
+
+def _resolved(node: Any, where: str = "") -> Iterator[tuple[str, str]]:
+    """Every "resolved" in an npm lockfile, v1's nested dependencies and v2's flat packages."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "resolved" and isinstance(value, str):
+                yield where or "(root)", value
+            else:
+                yield from _resolved(
+                    value, key if key not in ("packages", "dependencies") else where
+                )
+    elif isinstance(node, list):
+        for item in node:
+            yield from _resolved(item, where)
 
 
 def _js_framework(script: str, package: dict[str, Any]) -> Framework:

@@ -17,6 +17,14 @@ downloads: pip with --only-binary=:all:, so no sdist's setup.py ever runs, and n
 and yarn with --ignore-scripts, so no lifecycle script does. The fetch step downloads
 files. Everything that runs them runs later, with no network.
 
+Keep that claim exactly this narrow. "The fetch executes nothing it downloads" is true;
+"nothing downloaded ever executes" is false. A wheel's code runs at test time, and a .pth
+file it ships runs at interpreter start before any test does, both inside the SandboxSpec
+container. The safety there is containment, not abstinence. And the fetch connects only
+where this project chooses: pip to its index, since check_requirement refuses a URL, and a
+JS install to the public registry, since detect refuses a lockfile or package.json that
+resolves anywhere else.
+
 Images are pinned by digest. A tag is mutable, so a sandbox pinned to a tag runs
 something other than what the escape test proved, which would make the gate a statement
 about the past rather than about production.
