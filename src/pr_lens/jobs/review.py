@@ -9,17 +9,13 @@ posted_comments row is taken.
 Silence is recorded like everything else. A pull request that is a draft or opened by a
 bot gets no review. A repository with no corpus yet is reviewed without past comments.
 
-The testbed is the one place a branch name means something. A pull request there whose
-head branch is seed/<owner>__<name>/<number>/head is a historical pull request rebuilt for
-a live run, and it retrieves from the repository it was copied out of, stopping below the
-original number exactly as replay does. Every other repository's branch names are only
-names, since anyone opening a pull request chooses them.
+A seeded testbed pull request retrieves from the repository it was copied out of, with
+replay's cutoff; review.seeded holds that rule.
 """
 
 import asyncio
 import logging
 import os
-import re
 import sys
 import time
 
@@ -41,21 +37,9 @@ from pr_lens.review.pipeline import MAX_CANDIDATE_HUNKS, review
 from pr_lens.review.post import post
 from pr_lens.review.provider import from_env
 from pr_lens.review.retrieve import CommentIndex, load_index
+from pr_lens.review.seeded import seed_source
 
 logger = logging.getLogger(__name__)
-
-TESTBED = "suryaprasathjp/pr-lens-testbed"
-_SEED = re.compile(r"^seed/(?P<owner>[\w.-]+)__(?P<name>[\w.-]+)/(?P<number>[1-9]\d*)/head$")
-
-
-def seed_source(repo: str, head_ref: str) -> tuple[str, int] | None:
-    """The repository and pull request a seeded testbed pull request was copied from."""
-    if repo.lower() != TESTBED:
-        return None
-    match = _SEED.match(head_ref)
-    if match is None:
-        return None
-    return f"{match['owner']}/{match['name']}", int(match["number"])
 
 
 def skip_reason(draft: bool, author: str) -> str | None:

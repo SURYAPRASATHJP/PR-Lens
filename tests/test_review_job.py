@@ -7,7 +7,8 @@ import respx
 from pr_lens.github.cache import HttpCache
 from pr_lens.github.client import GitHubClient
 from pr_lens.jobs.record_delivery import repo_outputs
-from pr_lens.jobs.review import commented_lines, seed_source, skip_reason
+from pr_lens.jobs.review import commented_lines, skip_reason
+from pr_lens.review.seeded import branches, seed_source
 
 
 def test_a_seeded_testbed_branch_names_where_it_was_copied_from() -> None:
@@ -15,6 +16,15 @@ def test_a_seeded_testbed_branch_names_where_it_was_copied_from() -> None:
         "encode/httpx",
         3312,
     )
+
+
+def test_the_branch_seed_pushes_is_the_branch_review_reads() -> None:
+    base, head = branches("pydantic/pydantic-settings", 949)
+    assert seed_source("suryaprasathjp/pr-lens-testbed", head) == (
+        "pydantic/pydantic-settings",
+        949,
+    )
+    assert seed_source("suryaprasathjp/pr-lens-testbed", base) is None
 
 
 @pytest.mark.parametrize(
