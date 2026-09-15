@@ -36,7 +36,8 @@ async def conn() -> AsyncIterator[asyncpg.Connection]:
     assert dsn is not None
     await migrate(dsn)
     connection = await connect(dsn)
-    await connection.execute("truncate deliveries")
+    # cascade, because review_runs references deliveries from migration 0003 on.
+    await connection.execute("truncate deliveries cascade")
     yield connection
     await connection.close()
 
