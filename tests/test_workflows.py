@@ -38,6 +38,24 @@ def test_review_runs_once_per_pull_request_and_the_newest_wins() -> None:
     assert re.search(r"^  cancel-in-progress: true\s*$", text, re.MULTILINE)
 
 
+def test_review_mints_a_token_for_one_repository_that_cannot_push() -> None:
+    """The live job's credential. Pull requests write is what posting needs; contents stays
+    read, which keeps "never pushes" true at the token, and the token reaches exactly the
+    repository the delivery named."""
+    text = workflow("review.yml")
+    assert re.search(r"^permissions:\n  contents: read\n\n", text, re.MULTILINE)
+    assert "uses: actions/create-github-app-token@v3" in text
+    assert "owner: ${{ steps.record.outputs.owner }}" in text
+    assert "repositories: ${{ steps.record.outputs.repo_name }}" in text
+    granted = re.findall(r"^\s+permission-([\w-]+): (\w+)$", text, re.MULTILINE)
+    assert sorted(granted) == [("contents", "read"), ("pull-requests", "write")]
+    assert "GH_INSTALLATION_TOKEN: ${{ steps.token.outputs.token }}" in text
+    assert "Phase 0 stub" not in text
+    # Nothing from the payload is interpolated into a shell.
+    for command in re.findall(r"^\s+run: (.+)$", text, re.MULTILINE):
+        assert "${{" not in command
+
+
 def test_replay_holds_no_credential_that_could_post() -> None:
     """Replay never posts, and this is what makes that true rather than intended: without
     the App key it cannot mint an installation token, and without write permission its

@@ -57,6 +57,7 @@ class PullRequest:
     base_sha: str
     head_sha: str
     draft: bool
+    head_ref: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +92,7 @@ async def fetch_pull(client: GitHubClient, repo: str, number: int) -> PullReques
         base_sha=pull["base"]["sha"],
         head_sha=pull["head"]["sha"],
         draft=bool(pull.get("draft")),
+        head_ref=pull["head"].get("ref") or "",
     )
 
 

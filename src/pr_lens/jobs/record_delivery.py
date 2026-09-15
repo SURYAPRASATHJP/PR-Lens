@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,8 @@ from pr_lens.models import Delivery
 
 logger = logging.getLogger(__name__)
 
+_REPO = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
 
 def emit_output(name: str, value: str) -> None:
     """Hand a value back to the workflow so later steps can branch on it."""
@@ -31,6 +34,19 @@ def emit_output(name: str, value: str) -> None:
         return
     with Path(path).open("a", encoding="utf-8") as handle:
         handle.write(f"{name}={value}\n")
+
+
+def repo_outputs(repo_full_name: str | None) -> list[tuple[str, str]]:
+    """Owner and name as separate outputs, for the step that mints the installation token.
+
+    Expressions cannot split a string, so they go back to the workflow from here. Checked
+    against GitHub's own name rules first, because a newline in either would write a
+    second output line the workflow would believe.
+    """
+    if not repo_full_name or not _REPO.match(repo_full_name):
+        return []
+    owner, name = repo_full_name.split("/", 1)
+    return [("owner", owner), ("repo_name", name)]
 
 
 def parse_payload(raw: str) -> Delivery:
@@ -66,6 +82,8 @@ async def main() -> int:
         await conn.close()
 
     emit_output("new", "true" if is_new else "false")
+    for name, value in repo_outputs(delivery.repo_full_name):
+        emit_output(name, value)
     if is_new:
         logger.info(
             "recorded %s for %s#%s",

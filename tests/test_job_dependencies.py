@@ -22,7 +22,7 @@ WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 
 # The jobs that really open Postgres. Every other module in pr_lens.jobs is held to the
 # rule by default, so a job added later is covered the day it is added.
-DATABASE_JOBS = frozenset({"ingest", "record_delivery", "replay", "verdicts"})
+DATABASE_JOBS = frozenset({"ingest", "record_delivery", "replay", "review", "verdicts"})
 
 # Top-level modules each optional dependency group brings, from pyproject.toml.
 GROUP_MODULES = {
