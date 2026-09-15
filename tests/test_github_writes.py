@@ -11,7 +11,7 @@ import respx
 
 from pr_lens.github import writes
 from pr_lens.github.client import GitHubClient
-from pr_lens.github.writes import ALLOWED, ForbiddenWrite, route_for
+from pr_lens.github.writes import ALLOWED, DISCLOSURE, ForbiddenWrite, disclosed, route_for
 
 API = "https://api.github.com"
 SOURCE = Path(__file__).resolve().parents[1] / "src" / "pr_lens"
@@ -32,6 +32,10 @@ FORBIDDEN = [
     ("POST", "/repos/o/r/merges", "merge branches"),
     ("POST", "/repos/o/r/forks", "fork the repository"),
     ("POST", "/graphql", "anything a GraphQL mutation can do, approval included"),
+    ("POST", "/repos/o/r/pulls/7/comments/9/replies", "reply inside a human's thread"),
+    ("PATCH", "/repos/o/r/pulls/comments/9", "edit a comment, a human's included"),
+    ("DELETE", "/repos/o/r/pulls/comments/9", "delete a comment, a human's included"),
+    ("POST", "/repos/o/r/issues/7/comments", "comment on the conversation, not a line"),
 ]
 
 
@@ -39,6 +43,7 @@ def test_the_allowlist_holds_exactly_these_routes() -> None:
     """A new route fails here until this list is edited on purpose, beside its reason."""
     assert [(route.method, route.pattern.pattern) for route in ALLOWED] == [
         ("POST", r"^/repos/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/dispatches$"),
+        ("POST", r"^/repos/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pulls/[1-9][0-9]*/comments$"),
     ]
     assert all(route.why for route in ALLOWED)
 
@@ -124,3 +129,53 @@ def test_dispatch_writes_through_the_chokepoint() -> None:
     nothing, and the scan above would catch the direct call that replaced it."""
     text = (SOURCE / "github" / "dispatch.py").read_text(encoding="utf-8")
     assert "writes.send(" in text
+
+
+COMMENTS = f"{API}/repos/o/r/pulls/7/comments"
+
+
+def comment(**overrides: object) -> dict[str, object]:
+    return {
+        "body": disclosed("Popping keys[0] on an empty dict raises KeyError."),
+        "commit_id": "a" * 40,
+        "path": "pkg/cache.py",
+        "line": 12,
+        "side": "RIGHT",
+        **overrides,
+    }
+
+
+def test_a_line_comment_with_its_disclosure_is_allowed() -> None:
+    route = route_for("POST", COMMENTS)
+    route.check(comment())
+    assert route.why.startswith("leave one line comment")
+
+
+@pytest.mark.parametrize(
+    ("overrides", "why"),
+    [
+        ({"body": "No disclosure."}, "disclosure"),
+        ({"body": f"{DISCLOSURE}\n\nDisclosure first, then the comment."}, "disclosure"),
+        ({"body": disclosed("x" * 5000)}, "not a line comment"),
+        ({"event": "APPROVE"}, "exactly"),
+        ({"in_reply_to": 9}, "exactly"),
+        ({"side": "LEFT"}, "side RIGHT"),
+        ({"line": "12"}, "side RIGHT"),
+    ],
+    ids=["no disclosure", "disclosure not last", "too long", "approval", "reply", "left", "line"],
+)
+def test_every_comment_carries_the_disclosure_and_nothing_else(
+    overrides: dict[str, object], why: str
+) -> None:
+    """The 12 Sep audit's third wish, enforced where every comment has to pass."""
+    with pytest.raises(ForbiddenWrite, match=why):
+        route_for("POST", COMMENTS).check(comment(**overrides))
+
+
+@respx.mock
+async def test_a_comment_without_its_disclosure_never_reaches_the_network() -> None:
+    route = respx.post(COMMENTS).mock(return_value=httpx.Response(201))
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ForbiddenWrite):
+            await writes.send(client, "POST", COMMENTS, json=comment(body="bare"), headers={})
+    assert not route.called
