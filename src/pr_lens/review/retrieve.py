@@ -11,6 +11,11 @@ Two rules decide what the drafting call must never be shown, and each has a test
 The holdout is refused. Phase 5's golden set is those nine repositories, and drafts over
 them feeding the keep-or-kill loop would tune the prompt on the test set.
 
+Automated reviewers are left out. Copilot and its kind write a large share of the review
+comments in some repositories, and a draft grounded in "what this project's reviewers care
+about" should rest on what its people said. eval.pairs holds the list, and it is the same
+one the Phase 2 query set drops.
+
 A pull request never sees its own review comments, or any later pull request's. For
 replay they are the answer key: with them in the index a draft can restate what the human
 reviewer said and be kept for it. Comments carry no timestamp, only the number of the
@@ -24,6 +29,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pr_lens.eval.corpus import EvalDocument, read_corpus
+from pr_lens.eval.pairs import is_automated_login
 from pr_lens.eval.split import HOLDOUT, HoldoutViolation
 from pr_lens.eval.store import Store
 from pr_lens.eval.vectors import corpus_part, document_matrix, load_rows
@@ -107,6 +113,7 @@ def load_index(store: Store, repo: str, encoder: Encoder) -> CommentIndex:
         if document.kind == "review_comment"
         and document.pull_request_number is not None
         and document.body
+        and not is_automated_login(document.author or "")
     ]
     vectors, _ = document_matrix(rows, comments, body_only=True)
     return CommentIndex(repo, comments, vectors, encoder)

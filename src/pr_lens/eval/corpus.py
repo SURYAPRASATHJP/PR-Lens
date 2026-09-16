@@ -44,6 +44,9 @@ class EvalDocument:
     # Also review comments only: the pull request the comment was left on, which is the
     # nearest thing the corpus has to a timestamp. Review uses it as the replay cutoff.
     pull_request_number: int | None = None
+    # Also review comments only: who wrote it. The corpus keeps the login and not the
+    # account type, which is what review.retrieve has to judge an automated reviewer by.
+    author: str | None = None
 
     def serialised(self, serialisation: Serialisation) -> str:
         if serialisation == "body_only" and self.body is not None:
@@ -135,7 +138,12 @@ def _document(record: dict[str, Any]) -> EvalDocument:
         text=str(record["text"]),
         body=body_only(record) if kind == "review_comment" else None,
         pull_request_number=_pull_request_number(record) if kind == "review_comment" else None,
+        author=_author(record) if kind == "review_comment" else None,
     )
+
+
+def _author(record: dict[str, Any]) -> str:
+    return str(record.get("metadata", {}).get("author", ""))
 
 
 def _pull_request_number(record: dict[str, Any]) -> int | None:

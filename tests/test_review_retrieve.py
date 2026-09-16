@@ -19,7 +19,7 @@ REPO = sorted(TUNE)[0]
 MODEL = MODELS["gte-modernbert"]
 
 
-def comment(comment_id: int, pull: int, body: str) -> CorpusUnit:
+def comment(comment_id: int, pull: int, body: str, author: str = "reviewer") -> CorpusUnit:
     unit = review_comment_unit(
         REPO,
         {
@@ -28,7 +28,7 @@ def comment(comment_id: int, pull: int, body: str) -> CorpusUnit:
             "line": 3,
             "diff_hunk": "@@ -1,2 +1,2 @@\n-a\n+b\n",
             "body": body,
-            "user": {"login": "reviewer"},
+            "user": {"login": author},
             "pull_request_url": f"https://api.github.com/repos/{REPO}/pulls/{pull}",
         },
     )
@@ -82,6 +82,25 @@ def test_only_review_comments_are_indexed_and_by_body(sink: LocalSink) -> None:
     assert found[0].body.startswith("Cache eviction") or found[0].body.startswith("The cache")
     assert not any(past.body.startswith("@@") for past in found)
     assert found == sorted(found, key=lambda past: -past.score)
+
+
+def test_an_automated_reviewers_comments_are_not_what_this_project_cares_about(
+    tmp_path: Path,
+) -> None:
+    """Copilot writes a large share of the review comments in some repositories. A draft
+    grounded in what reviewers care about should rest on what its people said."""
+    sink = build(
+        tmp_path,
+        [
+            comment(1, 5, "cache eviction drops the newest entry", author="maintainer"),
+            comment(2, 6, "cache eviction nit from a machine", author="Copilot"),
+            comment(3, 7, "cache eviction nit from another machine", author="dependabot[bot]"),
+        ],
+    )
+    index = load_index(sink, REPO, BagEncoder(MODEL))
+    assert index.size == 1
+    [[past]] = index.search(["cache eviction"], before=100)
+    assert past.body.endswith("newest entry")
 
 
 def test_nothing_before_the_first_pull_is_an_empty_answer(sink: LocalSink) -> None:

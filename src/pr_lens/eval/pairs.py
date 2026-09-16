@@ -50,6 +50,10 @@ BOT_LOGINS = frozenset(
 AUTOMATED_REVIEWERS = frozenset(
     {
         "kramlipi",  # 12 Sep 2026, fastapi/typer: templated "**Worth a look** · design ·"
+        # 15 Sep 2026, pydantic/pydantic-settings, where it writes a large share of the
+        # recent review comments. GitHub types the account Bot, which is_bot sees, but the
+        # login carries no [bot] suffix, so a login on its own needs this list.
+        "copilot",
     }
 )
 
@@ -189,16 +193,20 @@ def nit_reason(body: str) -> DropReason | None:
     return None
 
 
+def is_automated_login(login: str) -> bool:
+    """Whether a login alone marks an automated reviewer.
+
+    The corpus stores the login and not the account type, so retrieval has only this to go
+    on, and the lists above have to carry any Bot-typed account whose login does not say so.
+    """
+    login = login.lower()
+    return login.endswith("[bot]") or login in BOT_LOGINS or login in AUTOMATED_REVIEWERS
+
+
 def is_bot(user: object) -> bool:
     if not isinstance(user, dict):
         return True
-    login = str(user.get("login", "")).lower()
-    return (
-        user.get("type") == "Bot"
-        or login.endswith("[bot]")
-        or login in BOT_LOGINS
-        or login in AUTOMATED_REVIEWERS
-    )
+    return user.get("type") == "Bot" or is_automated_login(str(user.get("login", "")))
 
 
 def screen_comment(comment: Mapping[str, Any]) -> DropReason | ReviewPair:
