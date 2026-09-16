@@ -34,6 +34,9 @@ create table if not exists review_runs (
     provider          text,
     model             text,
     timings           jsonb       not null default '{}'::jsonb,
+    -- What the sandbox could say: whether it ran, why not when it did not, and how many
+    -- tests passed at the base and failed at the head. Empty when it was not asked.
+    verification      jsonb       not null default '{}'::jsonb,
     -- Replay only: the human review comments left on this pull request, shown beside the
     -- drafts in the keep-or-kill file. The answer key, so it is stored here and never
     -- passed to the pipeline, which has no parameter that could carry it.

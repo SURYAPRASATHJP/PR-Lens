@@ -45,6 +45,7 @@ from pr_lens.review.context import fetch_changes, fetch_pull, fetch_windows
 from pr_lens.review.pipeline import MAX_CANDIDATE_HUNKS, NoComment, Review, review
 from pr_lens.review.provider import Inference, from_env
 from pr_lens.review.retrieve import CommentIndex, load_index
+from pr_lens.review.verify import verify
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,11 @@ def choose(
 
 
 async def replay_one(
-    client: GitHubClient, chosen: Chosen, index: CommentIndex, inference: Inference
+    client: GitHubClient,
+    chosen: Chosen,
+    index: CommentIndex,
+    inference: Inference,
+    sandbox: bool = False,
 ) -> tuple[Review, str, dict[str, float]]:
     """One pull request through the same pipeline live review uses. Returns the review, the
     head sha it was made at, and the seconds each stage took."""
@@ -125,9 +130,22 @@ async def replay_one(
         return Review(NoComment.FETCH_FAILED, detail=str(error)[:300]), "", timings
     timings["fetch"] = time.monotonic() - started
 
+    verification = None
+    if sandbox:
+        started = time.monotonic()
+        verification = await verify(chosen.repo, pull.base_sha, pull.head_sha, hunks)
+        timings["verify"] = time.monotonic() - started
+
     started = time.monotonic()
     result = await review(
-        pull, hunks, skipped, windows, inference, index=index, past_before=chosen.number
+        pull,
+        hunks,
+        skipped,
+        windows,
+        inference,
+        index=index,
+        past_before=chosen.number,
+        verification=verification,
     )
     timings["review"] = time.monotonic() - started
     return result, pull.head_sha, timings
@@ -158,7 +176,9 @@ def render(batch: str, rows: Sequence[tuple[Chosen, Review]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def run(store: Store, batch: str, count: int, dsn: str, encoder: Encoder) -> str:
+async def run(
+    store: Store, batch: str, count: int, dsn: str, encoder: Encoder, sandbox: bool = False
+) -> str:
     pairs, _ = load_pairs(store, PAIRS_VERSION)
     conn = await connect(dsn)
     rows: list[tuple[Chosen, Review]] = []
@@ -194,7 +214,7 @@ async def run(store: Store, batch: str, count: int, dsn: str, encoder: Encoder) 
                         time.monotonic() - started,
                     )
                 result, head_sha, timings = await replay_one(
-                    client, pick, indexes[pick.repo], inference
+                    client, pick, indexes[pick.repo], inference, sandbox
                 )
                 if spent_the_day(result):
                     # Every pull request after this one would come back the same way and
@@ -230,7 +250,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     encoder = SentenceEncoder(MODELS["gte-modernbert"])
     markdown = asyncio.run(
-        run(build_store(args.sink, args.corpus_dir), args.batch, args.pulls, dsn, encoder)
+        run(
+            build_store(args.sink, args.corpus_dir),
+            args.batch,
+            args.pulls,
+            dsn,
+            encoder,
+            os.environ.get("PR_LENS_SANDBOX") == "1",
+        )
     )
     sys.stdout.write(markdown)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

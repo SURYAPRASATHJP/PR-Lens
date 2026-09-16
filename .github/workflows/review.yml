@@ -9,6 +9,9 @@ on:
 
 permissions:
   contents: read
+  # The sandbox images, pulled by digest from ghcr.io when verification is on. Writing a
+  # package stays sandbox-images.yml's business alone.
+  packages: read
 
 concurrency:
   # Two pushes to one pull request fire two deliveries with two different ids, and the
@@ -31,8 +34,9 @@ jobs:
   review:
     runs-on: ubuntu-latest
     # Fetch, one retrieval index, two inference calls with room for the per-minute token
-    # window to roll over, and at most three posts.
-    timeout-minutes: 30
+    # window to roll over, and at most three posts. With verification on, two sandbox
+    # fetches and two runs as well, at Phase 3's measured cost.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,7 +46,12 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv sync --frozen --no-dev --group db --group ingest --group retrieval
+      - run: uv sync --frozen --no-dev --group db --group ingest --group retrieval --group sandbox
+
+      - name: Log in to ghcr.io for the sandbox images
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Record the delivery
         id: record
@@ -99,4 +108,7 @@ jobs:
           GROQ_MODEL: ${{ vars.GROQ_MODEL }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          # Set the repository variable to "1" to run the tests near the diff at the base
+          # commit and at the head. Off until a replay batch has measured what it adds.
+          PR_LENS_SANDBOX: ${{ vars.PR_LENS_SANDBOX }}
         run: uv run --no-dev python -m pr_lens.jobs.review

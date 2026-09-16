@@ -38,6 +38,7 @@ from pr_lens.review.post import post
 from pr_lens.review.provider import from_env
 from pr_lens.review.retrieve import CommentIndex, load_index
 from pr_lens.review.seeded import seed_source
+from pr_lens.review.verify import verify
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,12 @@ async def run(raw_payload: str, dsn: str, token: str) -> str:
             index = load_comment_index(seed[0] if seed else repo)
             timings["index"] = time.monotonic() - started
 
+            verification = None
+            if os.environ.get("PR_LENS_SANDBOX") == "1":
+                started = time.monotonic()
+                verification = await verify(repo, pull.base_sha, pull.head_sha, hunks, token)
+                timings["verify"] = time.monotonic() - started
+
             started = time.monotonic()
             result = await review(
                 pull,
@@ -121,6 +128,7 @@ async def run(raw_payload: str, dsn: str, token: str) -> str:
                 index=index,
                 past_before=seed[1] if seed else number,
                 existing=existing,
+                verification=verification,
             )
             timings["review"] = time.monotonic() - started
             await reviews.finish(conn, run_id, result, timings, head_sha=pull.head_sha)

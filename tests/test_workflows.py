@@ -38,12 +38,21 @@ def test_review_runs_once_per_pull_request_and_the_newest_wins() -> None:
     assert re.search(r"^  cancel-in-progress: true\s*$", text, re.MULTILINE)
 
 
+def permissions(text: str) -> dict[str, str]:
+    """The workflow's own token permissions, as a mapping."""
+    block = re.search(r"^permissions:\n((?:  \S+: \S+\n|  #[^\n]*\n)+)", text, re.MULTILINE)
+    assert block is not None
+    return dict(re.findall(r"^  (\S+): (\S+)$", block[1], re.MULTILINE))
+
+
 def test_review_mints_a_token_for_one_repository_that_cannot_push() -> None:
     """The live job's credential. Pull requests write is what posting needs; contents stays
     read, which keeps "never pushes" true at the token, and the token reaches exactly the
     repository the delivery named."""
     text = workflow("review.yml")
-    assert re.search(r"^permissions:\n  contents: read\n\n", text, re.MULTILINE)
+    # Its own token reads code and the sandbox images. Everything it writes on a pull
+    # request, it writes with the installation token minted below.
+    assert permissions(text) == {"contents": "read", "packages": "read"}
     assert "uses: actions/create-github-app-token@v3" in text
     assert "owner: ${{ steps.record.outputs.owner }}" in text
     assert "repositories: ${{ steps.record.outputs.repo_name }}" in text
@@ -64,7 +73,7 @@ def test_replay_holds_no_credential_that_could_post() -> None:
     assert "GH_APP_" not in text
     assert "create-github-app-token" not in text
     assert not re.search(r"^\s+\S+:\s*write\s*$", text, re.MULTILINE)
-    assert re.search(r"^permissions:\n  contents: read\n\n", text, re.MULTILINE)
+    assert permissions(text) == {"contents": "read", "packages": "read"}
 
 
 def test_replay_only_starts_from_a_replay_branch_or_by_hand() -> None:

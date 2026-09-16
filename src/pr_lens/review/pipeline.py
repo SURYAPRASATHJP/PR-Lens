@@ -38,6 +38,8 @@ from pr_lens.review.provider import (
     estimate_tokens,
 )
 from pr_lens.review.retrieve import CommentIndex, PastComment
+from pr_lens.review.verify import Verification
+from pr_lens.review.verify import render as render_verification
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +154,7 @@ class Review:
     dropped: list[Hunk] = field(default_factory=list)
     skipped: list[Skipped] = field(default_factory=list)
     past_shown: int = 0
+    verification: Verification | None = None
 
     @property
     def kept(self) -> list[DraftItem]:
@@ -181,6 +184,7 @@ async def review(
     index: CommentIndex | None = None,
     past_before: int | None = None,
     existing: frozenset[tuple[str, int]] = frozenset(),
+    verification: Verification | None = None,
 ) -> Review:
     """Draft, gate and filter. `past_before` is the retrieval cutoff, the pull request's own
     number unless a seeded replay says otherwise; `existing` is every (path, line) already
@@ -189,7 +193,7 @@ async def review(
     skipped = list(skipped)
     candidates = list(hunks[:MAX_CANDIDATE_HUNKS])
     if not candidates:
-        return Review(NoComment.NOTHING_REVIEWABLE, skipped=skipped)
+        return Review(NoComment.NOTHING_REVIEWABLE, skipped=skipped, verification=verification)
 
     past: list[list[PastComment]] = [[] for _ in candidates]
     if index is not None:
@@ -197,7 +201,10 @@ async def review(
         past = index.search([hunk.text for hunk in candidates], before=before)
 
     system = prompts.DRAFT_SYSTEM.format(cap=MAX_COMMENTS_PER_PR)
-    head = prompts.header(pull)
+    # Only regressions render, so this is empty unless the sandbox found a test that passes
+    # at the base commit and fails at this pull request's head.
+    evidence = render_verification(verification) if verification else ""
+    head = "\n\n".join(part for part in (prompts.header(pull), evidence) if part)
     budget = (
         CALL_TOKEN_BUDGET
         - DRAFT_COMPLETION_TOKENS
@@ -212,12 +219,21 @@ async def review(
     dropped = fitted.dropped + list(hunks[MAX_CANDIDATE_HUNKS:])
     shown = [hunk for hunk, _ in fitted.shown]
     if not shown:
-        return Review(NoComment.TOO_LARGE, skipped=skipped, dropped=dropped)
+        return Review(
+            NoComment.TOO_LARGE, skipped=skipped, dropped=dropped, verification=verification
+        )
     # fit keeps a prefix of the blocks, so the n-th shown block is the n-th candidate.
     past_shown = sum(
         len(past[n]) for n, (_, text) in enumerate(fitted.shown) if prompts.PAST_HEADING in text
     )
-    base = Review(None, shown=shown, dropped=dropped, skipped=skipped, past_shown=past_shown)
+    base = Review(
+        None,
+        shown=shown,
+        dropped=dropped,
+        skipped=skipped,
+        past_shown=past_shown,
+        verification=verification,
+    )
 
     user = "\n\n".join([head, *(text for _, text in fitted.shown)])
     try:

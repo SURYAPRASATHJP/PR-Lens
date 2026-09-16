@@ -111,18 +111,25 @@ def extract(tarball: bytes, into: Path) -> int:
     return skipped
 
 
-async def _source(repo: str, into: Path) -> tuple[str, float, int]:
-    """Download and unpack the head of the default branch. Returns sha, MB, skipped."""
-    token = mining_token()
+async def source_at(
+    repo: str, into: Path, sha: str | None = None, token: str | None = None
+) -> tuple[str, float, int]:
+    """Download and unpack one commit, the default branch's head unless a sha is given.
+
+    Returns the sha, the tarball's size in MB and the members the extraction filter refused.
+    Phase 4 passes a sha: it runs the base commit and the head of a pull request.
+    """
+    token = token or mining_token()
     if not token:
-        raise GitHubError("GH_MINING_TOKEN is not set")
+        raise GitHubError("no token: set GH_MINING_TOKEN, or pass an installation token")
     with tempfile.TemporaryDirectory() as cache_dir:
         async with httpx.AsyncClient(timeout=120, follow_redirects=True) as http:
             client = GitHubClient(http, token, HttpCache(Path(cache_dir)))
-            metadata = await client.get_json(f"/repos/{repo}")
-            branch = str(metadata["default_branch"])
-            commit = await client.get_json(f"/repos/{repo}/commits/{branch}")
-            sha = str(commit["sha"])
+            if sha is None:
+                metadata = await client.get_json(f"/repos/{repo}")
+                branch = str(metadata["default_branch"])
+                commit = await client.get_json(f"/repos/{repo}/commits/{branch}")
+                sha = str(commit["sha"])
             tarball = await client.get_raw(
                 f"/repos/{repo}/tarball/{sha}",
                 accept="application/vnd.github+json",
@@ -130,6 +137,10 @@ async def _source(repo: str, into: Path) -> tuple[str, float, int]:
             )
     skipped = extract(tarball, into)
     return sha, len(tarball) / 1e6, skipped
+
+
+async def _source(repo: str, into: Path) -> tuple[str, float, int]:
+    return await source_at(repo, into)
 
 
 def _outcome(detection: Detection, result: SandboxResult) -> Outcome:

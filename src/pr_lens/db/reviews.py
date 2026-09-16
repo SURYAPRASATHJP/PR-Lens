@@ -33,7 +33,8 @@ update review_runs set
     model = $12,
     timings = $13::jsonb,
     reference = $14::jsonb,
-    head_sha = coalesce(nullif($15, ''), head_sha)
+    head_sha = coalesce(nullif($15, ''), head_sha),
+    verification = $16::jsonb
 where run_id = $1
 """
 
@@ -107,6 +108,7 @@ async def finish(
             json.dumps({stage: round(seconds, 3) for stage, seconds in timings.items()}),
             json.dumps(list(reference)),
             head_sha,
+            json.dumps(_verification(review)),
         )
         await conn.executemany(
             _DRAFT,
@@ -128,6 +130,22 @@ async def finish(
                 for position, draft in enumerate(review.drafts)
             ],
         )
+
+
+def _verification(review: Review) -> dict[str, object]:
+    """The sandbox's answer, small enough to keep beside the run."""
+    checked = review.verification
+    if checked is None:
+        return {}
+    return {
+        "ran": checked.ran,
+        "reason": checked.reason,
+        "selected": len(checked.selected),
+        "regressions": len(checked.regressions),
+        "head_outcome": checked.head_outcome,
+        "base_outcome": checked.base_outcome,
+        "seconds": checked.seconds,
+    }
 
 
 async def release(conn: asyncpg.Connection, run_id: int) -> None:

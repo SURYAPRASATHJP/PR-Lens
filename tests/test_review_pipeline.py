@@ -23,6 +23,8 @@ from pr_lens.review.pipeline import (
 )
 from pr_lens.review.provider import ChatClient, Inference, Provider
 from pr_lens.review.retrieve import CommentIndex
+from pr_lens.review.verify import Verification
+from pr_lens.sandbox.evidence import Failure
 from tests.fakes import BagEncoder
 
 URL = "https://llm.example/v1/chat/completions"
@@ -226,6 +228,28 @@ async def test_past_comments_reach_the_prompt_and_stop_at_the_cutoff() -> None:
     assert "[1.1] pkg/cache.py (#12) evict pops newest keys" in prompt
     assert "answer key" not in prompt
     assert result.past_shown == 1
+
+
+@respx.mock
+async def test_a_regression_the_sandbox_found_is_shown_to_the_drafting_call() -> None:
+    found = (Failure("test_evict_oldest", "failure", "tests/test_cache.py", 7, "KeyError: 0"),)
+    verification = Verification(True, "", ("tests/test_cache.py",), found)
+    result, route = await run([completion(drafted())], verification=verification)
+    prompt = json.loads(route.calls[0].request.content)["messages"][1]["content"]
+    assert "pass before it and fail on it" in prompt
+    assert "test_evict_oldest" in prompt
+    assert result.verification is verification
+
+
+@respx.mock
+async def test_a_sandbox_with_nothing_to_report_adds_nothing_to_the_prompt() -> None:
+    """A run that could not be trusted, or found no regression, is silence in the prompt as
+    well as in the comment."""
+    quiet = Verification(False, "the head commit's tests came back install_failed")
+    _, route = await run([completion(drafted())], verification=quiet)
+    prompt = json.loads(route.calls[0].request.content)["messages"][1]["content"]
+    assert "install_failed" not in prompt
+    assert "were run at the base commit" not in prompt
 
 
 @respx.mock

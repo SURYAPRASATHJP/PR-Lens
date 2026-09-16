@@ -19,9 +19,14 @@ on:
       pulls:
         description: Pull requests to draft
         default: "15"
+      sandbox:
+        description: Run the tests near each diff at the base and the head
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  packages: read
 
 env:
   BATCH: ${{ inputs.batch || github.ref_name }}
@@ -48,7 +53,12 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv sync --frozen --no-dev --group db --group ingest --group retrieval
+      - run: uv sync --frozen --no-dev --group db --group ingest --group retrieval --group sandbox
+
+      - name: Log in to ghcr.io for the sandbox images
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
       # The model weights only, named. Never the whole hub cache, which also holds the
       # private corpus shards this job downloads, and caches on a public repo can be
@@ -68,4 +78,5 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           PULLS: ${{ inputs.pulls || '15' }}
+          PR_LENS_SANDBOX: ${{ inputs.sandbox && '1' || '' }}
         run: uv run --no-dev python -m pr_lens.jobs.replay --batch "${BATCH#replay/}" --pulls "$PULLS"
