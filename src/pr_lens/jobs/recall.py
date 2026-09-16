@@ -32,6 +32,7 @@ import numpy.typing as npt
 
 from pr_lens.eval.corpus import RepoCorpus, Serialisation, all_documents, gold_texts, load_repo
 from pr_lens.eval.pairs import QUERY_VARIANTS, ReviewPair, query_text
+from pr_lens.eval.parts import EMBED_PARTS, QUERY_PARTS
 from pr_lens.eval.recall import (
     DENSE_INDEX,
     FUSION_DEPTH,
@@ -49,9 +50,15 @@ from pr_lens.eval.recall import (
 from pr_lens.eval.report import render
 from pr_lens.eval.split import require_tune, tune_repos
 from pr_lens.eval.store import Store, build_store
-from pr_lens.eval.vectors import corpus_part, document_matrix, load_rows, query_id, query_part
+from pr_lens.eval.vectors import (
+    corpus_part,
+    document_matrix,
+    load_rows,
+    query_id,
+    query_part,
+)
 from pr_lens.jobs.pairs import load_pairs
-from pr_lens.jobs.plan import EMBED_PARTS, PAIRS_VERSION, QUERY_PARTS, RERANK_SAMPLE
+from pr_lens.jobs.plan import PAIRS_VERSION, RERANK_SAMPLE
 from pr_lens.logging import configure
 from pr_lens.retrieval.bm25 import BM25Index
 from pr_lens.retrieval.embed import MODELS, SentenceEncoder

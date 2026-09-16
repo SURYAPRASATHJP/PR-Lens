@@ -5,12 +5,12 @@ import pytest
 
 from pr_lens.corpus.writer import LocalSink, write_units
 from pr_lens.eval.corpus import read_corpus
+from pr_lens.eval.parts import EMBED_PARTS
 from pr_lens.eval.split import HOLDOUT, TUNE, HoldoutViolation
 from pr_lens.eval.vectors import corpus_part
 from pr_lens.ingest.mine import review_comment_unit
 from pr_lens.ingest.units import CorpusUnit
 from pr_lens.jobs.embed import embed_input
-from pr_lens.jobs.plan import EMBED_PARTS
 from pr_lens.retrieval.embed import MODELS
 from pr_lens.review.retrieve import MAX_COMMENT_CHARS, load_index
 from tests.fakes import BagEncoder

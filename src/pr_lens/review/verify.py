@@ -29,10 +29,10 @@ from pathlib import Path
 
 from pr_lens.github.client import GitHubError
 from pr_lens.ingest.diff import Hunk
-from pr_lens.jobs.sandbox import Row, run_detected, source_at
 from pr_lens.sandbox.detect import Language, detect
 from pr_lens.sandbox.evidence import Failure
 from pr_lens.sandbox.runner import SandboxError
+from pr_lens.sandbox.session import Row, run_detected, source_at
 from pr_lens.sandbox.spec import Outcome
 
 logger = logging.getLogger(__name__)

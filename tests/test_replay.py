@@ -8,13 +8,13 @@ import respx
 from pr_lens.corpus.writer import LocalSink, write_units
 from pr_lens.eval.corpus import read_corpus
 from pr_lens.eval.pairs import ReviewPair
+from pr_lens.eval.parts import EMBED_PARTS
 from pr_lens.eval.split import HOLDOUT, TUNE, HoldoutViolation
 from pr_lens.eval.vectors import corpus_part
 from pr_lens.github.cache import HttpCache
 from pr_lens.github.client import GitHubClient
 from pr_lens.ingest.mine import review_comment_unit
 from pr_lens.jobs.embed import embed_input
-from pr_lens.jobs.plan import EMBED_PARTS
 from pr_lens.jobs.replay import Chosen, choose, render, replay_one, spent_the_day
 from pr_lens.retrieval.embed import MODELS
 from pr_lens.review.pipeline import NoComment, Review

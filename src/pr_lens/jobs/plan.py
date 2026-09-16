@@ -12,12 +12,11 @@ import json
 import sys
 from collections.abc import Callable, Sequence
 
+from pr_lens.eval.parts import EMBED_PARTS, QUERY_PARTS
 from pr_lens.eval.split import tune_repos
 
 PAIRS_VERSION = "v1"
 
-EMBED_PARTS = {"bge-small": 1, "gte-modernbert": 8}
-QUERY_PARTS = {"bge-small": 1, "gte-modernbert": 4}
 
 # Pairs reranked, each under both query variants, so twice this many rerank passes of 30
 # candidates. 300 puts the 95% interval on a recall near 0.5 at about 0.06, enough to see

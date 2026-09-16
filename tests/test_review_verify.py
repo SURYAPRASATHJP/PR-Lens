@@ -5,7 +5,6 @@ import pytest
 
 from pr_lens.github.client import GitHubError
 from pr_lens.ingest.diff import parse_patch
-from pr_lens.jobs.sandbox import Row
 from pr_lens.review.verify import (
     MAX_REPORTED,
     Verification,
@@ -17,6 +16,7 @@ from pr_lens.review.verify import (
 )
 from pr_lens.sandbox.evidence import Failure
 from pr_lens.sandbox.runner import SandboxError
+from pr_lens.sandbox.session import Row
 from pr_lens.sandbox.spec import Outcome
 
 PATCH = "@@ -1,2 +1,2 @@\n def evict(keys):\n-    keys.pop()\n+    keys.pop(0)\n"

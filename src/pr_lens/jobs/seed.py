@@ -32,9 +32,9 @@ from pr_lens.eval.split import require_tune
 from pr_lens.github.cache import HttpCache
 from pr_lens.github.client import IMMUTABLE, GitHubClient
 from pr_lens.github.mining import mining_token
-from pr_lens.jobs.sandbox import extract
 from pr_lens.logging import configure
 from pr_lens.review.seeded import TESTBED, branches
+from pr_lens.sandbox.session import extract
 
 logger = logging.getLogger(__name__)
 

@@ -30,10 +30,10 @@ import numpy as np
 
 from pr_lens.eval.corpus import EvalDocument, read_corpus
 from pr_lens.eval.pairs import is_automated_login
+from pr_lens.eval.parts import EMBED_PARTS
 from pr_lens.eval.split import HOLDOUT, HoldoutViolation
 from pr_lens.eval.store import Store
 from pr_lens.eval.vectors import corpus_part, document_matrix, load_rows
-from pr_lens.jobs.plan import EMBED_PARTS
 from pr_lens.retrieval.embed import Encoder, Vectors
 from pr_lens.retrieval.search import top_k
 

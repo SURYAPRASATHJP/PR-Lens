@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from pr_lens.jobs import sandbox as job
-from pr_lens.sandbox import runner
+from pr_lens.sandbox import runner, session
 from pr_lens.sandbox.spec import FetchSpec, Outcome, SandboxResult, SandboxSpec
 
 PYTEST_OUTPUT = (
@@ -49,7 +49,7 @@ def tarball(files: dict[str, str], top: str = "owner-repo-abc123") -> bytes:
 def test_extract_strips_the_top_directory_and_refuses_links_out_of_the_tree(
     tmp_path: Path,
 ) -> None:
-    skipped = job.extract(tarball({"pyproject.toml": "x", "tests/test_a.py": ""}), tmp_path)
+    skipped = session.extract(tarball({"pyproject.toml": "x", "tests/test_a.py": ""}), tmp_path)
     assert (tmp_path / "pyproject.toml").read_text() == "x"
     assert (tmp_path / "tests" / "test_a.py").exists()
     assert not (tmp_path / "escape").exists()
@@ -82,13 +82,15 @@ class FakeSandbox:
 
 @pytest.fixture
 def python_repo(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_source(repo: str, into: Path) -> tuple[str, float, int]:
+    async def fake_source(
+        repo: str, into: Path, sha: str | None = None, token: str | None = None
+    ) -> tuple[str, float, int]:
         (into / "pyproject.toml").write_text("[project]\nname = 'x'\nversion = '1'\n")
         (into / "tests").mkdir()
         (into / "tests" / "test_a.py").write_text("")
         return "a" * 40, 1.5, 0
 
-    monkeypatch.setattr(job, "_source", fake_source)
+    monkeypatch.setattr(session, "source_at", fake_source)
 
 
 def install(monkeypatch: pytest.MonkeyPatch, fake: FakeSandbox) -> None:
@@ -114,7 +116,7 @@ async def test_every_ending_is_a_row(
 ) -> None:
     fake = FakeSandbox(fetched=result(), ran=ran)
     install(monkeypatch, fake)
-    row = await job.run_repo("encode/httpx")
+    row = await session.run_repo("encode/httpx")
     assert row.outcome == outcome.value
     assert row.pull_seconds == 4.25
     assert row.sha == "a" * 40
@@ -124,7 +126,7 @@ async def test_every_ending_is_a_row(
 @pytest.mark.usefixtures("python_repo")
 async def test_a_failed_run_carries_parsed_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
     install(monkeypatch, FakeSandbox(result(), result(exit_code=1, stdout=PYTEST_OUTPUT)))
-    row = await job.run_repo("encode/httpx")
+    row = await session.run_repo("encode/httpx")
     assert row.evidence is not None
     assert row.evidence["parser"] == "pytest"
     assert len(row.evidence["failures"]) == 4
@@ -139,7 +141,7 @@ async def test_a_failed_install_is_reported_and_the_tests_are_not_run(
         ran=result(),
     )
     install(monkeypatch, fake)
-    row = await job.run_repo("encode/httpx")
+    row = await session.run_repo("encode/httpx")
     assert row.outcome == Outcome.INSTALL_FAILED.value
     assert "No matching distribution" in row.excerpt
     assert [type(spec) for spec in fake.specs] == [FetchSpec]
@@ -148,16 +150,18 @@ async def test_a_failed_install_is_reported_and_the_tests_are_not_run(
 async def test_a_repository_with_no_tests_never_touches_docker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_source(repo: str, into: Path) -> tuple[str, float, int]:
+    async def fake_source(
+        repo: str, into: Path, sha: str | None = None, token: str | None = None
+    ) -> tuple[str, float, int]:
         (into / "go.mod").write_text("module x\n")
         return "b" * 40, 0.1, 0
 
     async def forbidden(*args: object) -> float:
         raise AssertionError("docker was called for a repository with no tests")
 
-    monkeypatch.setattr(job, "_source", fake_source)
+    monkeypatch.setattr(session, "source_at", fake_source)
     monkeypatch.setattr(runner, "pull", forbidden)
-    row = await job.run_repo("encode/httpx")
+    row = await session.run_repo("encode/httpx")
     assert row.outcome == Outcome.NO_TESTS.value
     assert "Go" in row.reason
 
@@ -170,7 +174,7 @@ async def test_a_docker_failure_is_an_error_row_not_a_crash(
         raise runner.SandboxError("docker pull failed: denied")
 
     monkeypatch.setattr(runner, "pull", broken_pull)
-    row = await job.run_repo("encode/httpx")
+    row = await session.run_repo("encode/httpx")
     assert row.outcome == Outcome.ERROR.value
     assert row.error == "docker pull failed: denied"
 
@@ -218,7 +222,7 @@ def test_the_table_renders_from_rows(tmp_path: Path, monkeypatch: pytest.MonkeyP
     rows = tmp_path / "rows"
     rows.mkdir()
     for name, outcome, pull in (("a/one", "passed", 3.0), ("b/two", "no_tests", None)):
-        row = job.Row(repo=name, outcome=outcome, pull_seconds=pull, reason="why | not")
+        row = session.Row(repo=name, outcome=outcome, pull_seconds=pull, reason="why | not")
         (rows / f"{name.replace('/', '__')}.json").write_text(json.dumps(asdict(row)))
     table = tmp_path / "table.md"
     monkeypatch.setenv("SANDBOX_ROWS", str(rows))

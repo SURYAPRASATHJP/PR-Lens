@@ -7,6 +7,7 @@ done in-process passes spuriously once any earlier test has imported the driver.
 import here happens in a fresh interpreter.
 """
 
+import ast
 import json
 import pkgutil
 import re
@@ -85,6 +86,29 @@ def workflow_cases() -> list[tuple[str, str, frozenset[str]]]:
             name = f"{path.stem}:{block.split(':', 1)[0].strip()}"
             cases.extend((name, module, missing) for module in modules)
     return cases
+
+
+def test_only_jobs_import_jobs() -> None:
+    """jobs/ is the Actions entry-point layer: every module there has a __main__ and is run
+    as python -m pr_lens.jobs.<name>. Nothing else in src/ imports from it, so the library
+    never depends on its own entry points. Phase 4 broke this once, with review/verify
+    reaching into jobs/sandbox for the code that runs a suite; that code moved to
+    sandbox/session, which both can use."""
+    source = Path(__file__).resolve().parents[1] / "src" / "pr_lens"
+    borrowed = []
+    for path in sorted(source.rglob("*.py")):
+        if path.parent.name == "jobs":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            named = (
+                isinstance(node, ast.ImportFrom) and (node.module or "").startswith("pr_lens.jobs")
+            ) or (
+                isinstance(node, ast.Import)
+                and any(alias.name.startswith("pr_lens.jobs") for alias in node.names)
+            )
+            if named:
+                borrowed.append(path.relative_to(source).as_posix())
+    assert borrowed == []
 
 
 def test_the_rules_cover_every_phase_2_job() -> None:
