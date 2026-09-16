@@ -157,6 +157,22 @@ async def batch_drafts(conn: asyncpg.Connection, batch: str) -> list[asyncpg.Rec
     return list(await conn.fetch(_BATCH_DRAFTS, batch))
 
 
+async def silent_runs(conn: asyncpg.Connection, batch: str) -> list[asyncpg.Record]:
+    """The batch's pull requests that produced no draft at all, with why.
+
+    A rate limit must not read as nothing to report. Without these rows a pull request the
+    provider refused looks exactly like one nobody drafted anything for.
+    """
+    return list(
+        await conn.fetch(
+            "select repo, pr_number, no_comment, detail, verification from review_runs "
+            "where batch = $1 and not exists (select 1 from drafts where drafts.run_id = "
+            "review_runs.run_id) order by repo, pr_number",
+            batch,
+        )
+    )
+
+
 async def replayed_elsewhere(conn: asyncpg.Connection, batch: str) -> set[tuple[str, int]]:
     """Every pull request another replay batch has drafted, so a new batch reads new ones.
 

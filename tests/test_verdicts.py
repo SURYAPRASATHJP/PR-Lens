@@ -39,6 +39,21 @@ def test_the_file_shows_each_draft_beside_what_the_human_said() -> None:
     assert "VERDICT 11:" in text and "VERDICT 12:" in text
 
 
+def test_a_pull_request_that_drafted_nothing_still_says_why() -> None:
+    """A rate limit must not read as nothing to report. Without this the pull request the
+    provider refused looks exactly like one the model had nothing to say about."""
+    silent = [
+        {"repo": "o/r", "pr_number": 9, "no_comment": "rate_limited", "detail": "groq 429"},
+        {"repo": "o/r", "pr_number": 11, "no_comment": "model_silent", "detail": ""},
+    ]
+    text = render("b1", [row(11, "One.")], silent)
+    assert "## Drafted nothing" in text
+    assert "- o/r#9 rate_limited: groq 429" in text
+    assert "- o/r#11 model_silent" in text
+    # And none of it is a verdict line to fill in.
+    assert parse(text) == []
+
+
 def test_verdicts_round_trip_and_blank_lines_are_skipped() -> None:
     text = render("b1", [row(11, "One."), row(12, "Two."), row(13, "Three.")])
     text = text.replace("VERDICT 11:", "VERDICT 11: keep, a real bug")

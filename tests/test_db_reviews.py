@@ -8,7 +8,7 @@ import pytest
 
 from pr_lens.db.connection import connect
 from pr_lens.db.migrate import migrate
-from pr_lens.db.reviews import batch_drafts, claim, finish, record_verdicts
+from pr_lens.db.reviews import batch_drafts, claim, finish, record_verdicts, silent_runs
 from pr_lens.ingest.diff import parse_patch
 from pr_lens.review.pipeline import Call, Draft, DraftItem, Fate, NoComment, Review
 
@@ -140,6 +140,9 @@ async def test_a_silent_run_records_why(conn: asyncpg.Connection) -> None:
     row = await conn.fetchrow("select no_comment, detail from review_runs where run_id = $1", run)
     assert row is not None
     assert (row["no_comment"], row["detail"]) == ("rate_limited", "groq 429")
+    # And it reaches the keep-or-kill file, where it would otherwise be invisible.
+    [quiet] = await silent_runs(conn, "b")
+    assert (quiet["pr_number"], quiet["no_comment"]) == (11, "rate_limited")
 
 
 async def test_a_verdict_is_keep_or_kill_and_nothing_else(conn: asyncpg.Connection) -> None:

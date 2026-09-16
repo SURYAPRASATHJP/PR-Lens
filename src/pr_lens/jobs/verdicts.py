@@ -46,7 +46,11 @@ def _reference(value: Any) -> list[dict[str, Any]]:
     return list(parsed or [])
 
 
-def render(batch: str, rows: Sequence[Mapping[str, Any]]) -> str:
+def render(
+    batch: str,
+    rows: Sequence[Mapping[str, Any]],
+    silent: Sequence[Mapping[str, Any]] = (),
+) -> str:
     lines = [
         f"# Replay batch `{batch}`",
         "",
@@ -88,6 +92,14 @@ def render(batch: str, rows: Sequence[Mapping[str, Any]]) -> str:
         if row["filter_reason"]:
             lines += ["filter:", *_quote(row["filter_reason"])]
         lines += ["", f"VERDICT {row['draft_id']}: {verdict} {reason}".rstrip(), ""]
+    if silent:
+        # Nothing to judge here, but a pull request the provider refused must not read the
+        # same as one the model looked at and had nothing to say about.
+        lines += ["## Drafted nothing", ""]
+        for run in silent:
+            detail = f": {run['detail']}" if run["detail"] else ""
+            lines.append(f"- {run['repo']}#{run['pr_number']} {run['no_comment']}{detail}")
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -106,10 +118,16 @@ def parse(text: str) -> list[tuple[int, Verdict, str]]:
     return verdicts
 
 
-async def batch_rows(dsn: str, batch: str) -> list[Mapping[str, Any]]:
+async def batch_rows(
+    dsn: str, batch: str
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+    """The batch's drafts, and the pull requests that produced none."""
     conn = await connect(dsn)
     try:
-        return list(await reviews.batch_drafts(conn, batch))
+        return (
+            list(await reviews.batch_drafts(conn, batch)),
+            list(await reviews.silent_runs(conn, batch)),
+        )
     finally:
         await conn.close()
 
@@ -141,10 +159,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         logger.error("DATABASE_URL is not set")
         return 1
     if args.command == "export":
-        rows = asyncio.run(batch_rows(dsn, args.batch))
+        rows, silent = asyncio.run(batch_rows(dsn, args.batch))
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(render(args.batch, rows), encoding="utf-8")
-        logger.info("%s drafts written to %s", len(rows), args.out)
+        args.out.write_text(render(args.batch, rows, silent), encoding="utf-8")
+        logger.info("%s drafts and %s silent runs written to %s", len(rows), len(silent), args.out)
     else:
         verdicts = parse(args.file.read_text(encoding="utf-8"))
         asyncio.run(save(dsn, verdicts))
