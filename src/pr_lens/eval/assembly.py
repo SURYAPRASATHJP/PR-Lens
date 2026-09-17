@@ -102,8 +102,7 @@ class Assembly:
 
 
 HEADER = (
-    "| retention | shown | dropped | skipped | not in diff | queries |\n"
-    "|---|---|---|---|---|---|"
+    "| retention | shown | dropped | skipped | not in diff | queries |\n|---|---|---|---|---|---|"
 )
 
 
