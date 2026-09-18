@@ -51,9 +51,26 @@ MAX_LINE_CHARS = 200
 # The import block of one changed file, and of all of them together. A one line import is
 # what decides whether a "this name is not defined" comment is true, and ranking sorts it
 # near the bottom every time because it adds one line. So it is shown outside the ranking.
-# The caps are what stop a file with a hundred imports from spending the diff's budget.
-MAX_IMPORT_LINES_PER_FILE = 25
-MAX_IMPORT_LINES_TOTAL = 100
+#
+# Budgeted in tokens, not lines, and measured rather than guessed. The first version of
+# this capped at 25 lines per file and the re-run of the gate still drafted the same false
+# comment: cli.py has 69 import lines, 25 of them stopped inside a `from typing import (`
+# block on line 28, and the name in question is imported on line 62. Its whole import
+# block is 552 tokens against the 400 the run left unspent. A line cap cuts the local
+# relative imports, which sort last and matter most.
+MAX_IMPORT_TOKENS_PER_FILE = 900
+MAX_IMPORT_TOKENS_TOTAL = 2500
+
+# Only files with a module scope. A markdown page is not one: docs/index.md in the same
+# pull request has 287 lines that start with "from" or "import", every one of them inside
+# a fenced example, and listing them as names in scope would have been 2,615 tokens of
+# actively misleading context.
+IMPORT_SUFFIXES = (".py", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+
+# Where the import block ends. Imports live at the top of a module, so the first top level
+# definition ends the scan. Without this the scanner walks the whole file and collects
+# every string and example that happens to begin with "import".
+_BODY_STARTS = ("def ", "class ", "async def ", "@", "if __name__")
 
 IMPORTS_HEADING = (
     "Names already in scope in the changed files at this commit. These lines are outside "
@@ -296,21 +313,22 @@ def imports(file_lines: Sequence[str]) -> list[tuple[int, str]]:
 
     A parenthesised import spans several lines and the names are on the continuation
     lines, so taking only the first line would list the module and hide every name it
-    brings in, which is the opposite of the point.
+    brings in, which is the opposite of the point. Stops at the first top level
+    definition, because that is where a module's import block ends.
     """
     found: list[tuple[int, str]] = []
     number = 0
     total = len(file_lines)
-    while number < total and len(found) < MAX_IMPORT_LINES_PER_FILE:
+    while number < total:
         line = file_lines[number]
         number += 1
+        if line.startswith(_BODY_STARTS):
+            break
         if not _is_import_start(line):
             continue
         found.append((number, line))
         buffered = line
         while (_unclosed(buffered) or buffered.rstrip().endswith("\\")) and number < total:
-            if len(found) >= MAX_IMPORT_LINES_PER_FILE:
-                break
             line = file_lines[number]
             number += 1
             found.append((number, line))
@@ -319,24 +337,34 @@ def imports(file_lines: Sequence[str]) -> list[tuple[int, str]]:
 
 
 def render_imports(windows: Mapping[str, Sequence[str]]) -> str:
-    """The import block of every changed file whose head was fetched, one section each.
+    """The import block of every changed source file whose head was fetched, one section each.
 
     This is shown outside the hunk budget because it is the context that decides whether a
-    claim about an undefined name is true, and it is small: one line each, already paid
-    for by the file fetches the windows needed.
+    claim about an undefined name is true, and it is cheap: the head of these files was
+    already fetched for the windows, so it costs no call.
+
+    A file's whole block goes in or none of it does. Half an import block is worse than
+    none: it reads as the complete list of what is in scope while the name in question sat
+    on the line after the cut, which is exactly how the first attempt at this still let the
+    false comment through. Files are taken in the order the windows were fetched, which is
+    hunk rank order, so the file the review is most likely to be about is served first.
     """
     sections: list[str] = []
-    budget = MAX_IMPORT_LINES_TOTAL
-    for path in sorted(windows):
-        if budget <= 0:
-            break
-        found = imports(windows[path])[:budget]
+    budget = MAX_IMPORT_TOKENS_TOTAL
+    for path, lines in windows.items():
+        if not path.endswith(IMPORT_SUFFIXES):
+            continue
+        found = imports(lines)
         if not found:
             continue
-        budget -= len(found)
         rows = [path]
         rows.extend(_row(number, ".", text) for number, text in found)
-        sections.append("\n".join(rows))
+        section = "\n".join(rows)
+        cost = estimate_tokens(section)
+        if cost > MAX_IMPORT_TOKENS_PER_FILE or cost > budget:
+            continue
+        budget -= cost
+        sections.append(section)
     if not sections:
         return ""
     return "\n".join([IMPORTS_HEADING, *sections])

@@ -11,7 +11,7 @@ from pr_lens.ingest.diff import parse_patch
 from pr_lens.review.context import (
     IMPORTS_HEADING,
     MAX_HUNK_LINES,
-    MAX_IMPORT_LINES_PER_FILE,
+    MAX_IMPORT_TOKENS_PER_FILE,
     Block,
     commentable,
     fetch_changes,
@@ -189,9 +189,51 @@ def test_javascript_imports_re_exports_and_requires_are_found() -> None:
     assert [number for number, _ in imports(lines)] == [1, 2, 3]
 
 
-def test_one_file_cannot_spend_the_whole_import_allowance() -> None:
-    lines = [f"import m{n}" for n in range(MAX_IMPORT_LINES_PER_FILE + 20)]
-    assert len(imports(lines)) == MAX_IMPORT_LINES_PER_FILE
+def test_a_file_with_an_enormous_import_block_is_left_out_whole() -> None:
+    """Half an import block is worse than none. It reads as the complete list of names in
+    scope while the one the review turns on sat just after the cut, which is how the first
+    version of this still let the false comment through on the gate re-run."""
+    huge = [f"from package.module{n} import Thing{n}" for n in range(400)]
+    rendered = render_imports({"src/huge.py": huge, "src/small.py": PY_HEAD})
+    assert "src/huge.py" not in rendered
+    assert "src/small.py" in rendered
+    assert "    3 . import os" in rendered
+
+
+def test_a_whole_block_that_fits_is_never_truncated() -> None:
+    lines = [f"from package.module{n} import Thing{n}" for n in range(20)]
+    rendered = render_imports({"src/many.py": lines})
+    assert estimate_tokens(rendered) < MAX_IMPORT_TOKENS_PER_FILE
+    assert "Thing0" in rendered and "Thing19" in rendered
+
+
+def test_the_scan_stops_where_the_module_body_starts() -> None:
+    """Without this the scanner walks the whole file and collects every string and example
+    beginning with "import". docs/index.md in the gate pull request has 287 of them."""
+    lines = [
+        "import os",
+        "",
+        "def helper():",
+        '    return "from pydantic import BaseModel"',
+        "",
+        "import late_and_unusual",
+    ]
+    assert [number for number, _ in imports(lines)] == [1]
+
+
+def test_a_file_with_no_module_scope_is_not_scanned_for_imports() -> None:
+    """A markdown page's fenced examples are not names in scope anywhere."""
+    page = ["# Guide", "", "```python", "from pydantic import BaseModel", "```"]
+    assert render_imports({"docs/index.md": page}) == ""
+    assert render_imports({"notes/setup.rst": page, "README.txt": page}) == ""
+
+
+def test_the_best_ranked_file_gets_the_import_allowance_first() -> None:
+    """windows is built in hunk rank order, so the file the review is most likely to be
+    about is served before an alphabetically earlier one that would crowd it out."""
+    big = [f"from package.module{n} import Thing{n}" for n in range(150)]
+    rendered = render_imports({"z_ranked_first.py": PY_HEAD, "a_ranked_second.py": big})
+    assert "z_ranked_first.py" in rendered
 
 
 def test_the_import_listing_names_its_file_and_marks_its_rows_uncommentable() -> None:
