@@ -9,15 +9,19 @@ from pr_lens.github.cache import HttpCache
 from pr_lens.github.client import GitHubClient
 from pr_lens.ingest.diff import parse_patch
 from pr_lens.review.context import (
+    IMPORTS_HEADING,
     MAX_HUNK_LINES,
+    MAX_IMPORT_LINES_PER_FILE,
     Block,
     commentable,
     fetch_changes,
     fetch_pull,
     fetch_windows,
     fit,
+    imports,
     rank,
     render,
+    render_imports,
     skip_reason,
 )
 from pr_lens.review.provider import estimate_tokens
@@ -94,21 +98,115 @@ def test_a_huge_hunk_is_cut_rather_than_spending_the_whole_budget() -> None:
     assert "row 79" in rendered and "row 80" not in rendered
 
 
-def test_fit_takes_the_richest_rendering_that_fits_and_drops_in_rank_order() -> None:
+def test_the_code_of_every_hunk_is_fitted_before_any_hunk_is_enriched() -> None:
+    """The defect that made the first live comment false, as an assertion.
+
+    Under the old single greedy pass the first block took its rich rendering, the budget
+    ran out, and the two below it were dropped whole. Their code costs a fraction of one
+    window, so all three belong in the prompt and the enrichment is what gives way.
+    """
     hunk = parse_patch(PATCH, "a.py")[0]
-    big, small = "x" * 3000, "y" * 300
-    blocks = [Block(hunk, (big, small)), Block(hunk, (big, small)), Block(hunk, (big, small))]
-    fitted = fit(blocks, budget=estimate_tokens(big) + estimate_tokens(small))
-    assert [text for _, text in fitted.shown] == [big, small]
-    assert len(fitted.dropped) == 1
-    assert fitted.tokens == estimate_tokens(big) + estimate_tokens(small)
+    rich, bare = "x" * 3000, "y" * 300
+    blocks = [Block(hunk, (rich, bare))] * 3
+    fitted = fit(blocks, budget=estimate_tokens(rich) + estimate_tokens(bare))
+    assert [text for _, text in fitted.shown] == [bare, bare, bare]
+    assert fitted.dropped == []
 
 
-def test_nothing_fitting_is_everything_dropped() -> None:
+def test_a_hunk_too_large_to_fit_does_not_drop_the_ones_ranked_below_it() -> None:
+    """Pull request 16 in one line: ten one line hunks dropped behind a hunk that did not
+    fit, one of them the import that decided whether the posted comment was true."""
     hunk = parse_patch(PATCH, "a.py")[0]
-    fitted = fit([Block(hunk, ("z" * 900,))], budget=10)
-    assert fitted.shown == []
+    huge, small = "x" * 9000, "y" * 200
+    blocks = [Block(hunk, (small,)), Block(hunk, (huge,)), Block(hunk, (small,))]
+    fitted = fit(blocks, budget=estimate_tokens(small) * 2 + 5)
+    assert [text for _, text in fitted.shown] == [small, small]
     assert fitted.dropped == [hunk]
+    assert fitted.positions == (0, 2)
+
+
+def test_what_is_left_after_the_code_upgrades_the_best_ranked_hunk_first() -> None:
+    hunk = parse_patch(PATCH, "a.py")[0]
+    rich, bare = "x" * 1200, "y" * 200
+    blocks = [Block(hunk, (rich, bare)), Block(hunk, (rich, bare))]
+    fitted = fit(blocks, budget=estimate_tokens(rich) + estimate_tokens(bare))
+    assert [text for _, text in fitted.shown] == [rich, bare]
+    assert fitted.tokens == estimate_tokens(rich) + estimate_tokens(bare)
+
+
+def test_nothing_fitting_is_everything_dropped_whatever_the_rank() -> None:
+    hunk = parse_patch(PATCH, "a.py")[0]
+    fitted = fit([Block(hunk, ("z" * 900,)), Block(hunk, ("z" * 900,))], budget=10)
+    assert fitted.shown == []
+    assert fitted.dropped == [hunk, hunk]
+    assert fitted.positions == ()
+
+
+PY_HEAD = [
+    '"""A module."""',
+    "",
+    "import os",
+    "from pkg.types import (",
+    "    _CliVariadicArg,",
+    "    Other,",
+    ")",
+    "",
+    "def run():",
+    "    import json",
+    "    return json, os",
+]
+
+
+def test_a_parenthesised_import_keeps_the_names_on_its_continuation_lines() -> None:
+    """The names are on the continuation lines. Taking only the first line would list the
+    module and hide every name it brings in, which is the whole point of showing it."""
+    found = imports(PY_HEAD)
+    assert found == [
+        (3, "import os"),
+        (4, "from pkg.types import ("),
+        (5, "    _CliVariadicArg,"),
+        (6, "    Other,"),
+        (7, ")"),
+    ]
+
+
+def test_an_import_inside_a_function_is_not_a_name_in_scope_at_module_level() -> None:
+    """Line 10 is `    import json`, indented inside run(). Asserted by line number: the
+    first version of this test compared the text, which still passed when the indentation
+    check was removed, because the captured text keeps its leading spaces."""
+    assert 10 not in [number for number, _ in imports(PY_HEAD)]
+    assert [number for number, _ in imports(PY_HEAD)] == [3, 4, 5, 6, 7]
+
+
+def test_javascript_imports_re_exports_and_requires_are_found() -> None:
+    lines = [
+        "import { parse } from './parse';",
+        "export { Thing } from './thing';",
+        "const fs = require('fs');",
+        "export function go() {}",
+        "  import sneaky from 'x';",
+    ]
+    assert [number for number, _ in imports(lines)] == [1, 2, 3]
+
+
+def test_one_file_cannot_spend_the_whole_import_allowance() -> None:
+    lines = [f"import m{n}" for n in range(MAX_IMPORT_LINES_PER_FILE + 20)]
+    assert len(imports(lines)) == MAX_IMPORT_LINES_PER_FILE
+
+
+def test_the_import_listing_names_its_file_and_marks_its_rows_uncommentable() -> None:
+    rendered = render_imports({"src/app.py": PY_HEAD})
+    assert rendered.startswith(IMPORTS_HEADING)
+    assert "src/app.py" in rendered
+    assert "    3 . import os" in rendered
+    assert "    5 .     _CliVariadicArg," in rendered
+    # The hunk markers say "+" and " " are commentable. These rows must not claim to be.
+    assert " + " not in rendered
+
+
+def test_a_changed_file_with_no_imports_adds_no_section() -> None:
+    assert render_imports({"docs/guide.md": ["# Title", "Some prose."]}) == ""
+    assert render_imports({}) == ""
 
 
 @respx.mock

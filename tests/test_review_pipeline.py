@@ -10,7 +10,7 @@ from pr_lens.eval.corpus import EvalDocument
 from pr_lens.ingest.diff import parse_patch
 from pr_lens.retrieval.embed import MODELS
 from pr_lens.review import prompts
-from pr_lens.review.context import PullRequest, Skipped
+from pr_lens.review.context import IMPORTS_HEADING, PullRequest, Skipped
 from pr_lens.review.pipeline import (
     MAX_COMMENTS_PER_PR,
     DraftAnswer,
@@ -81,7 +81,14 @@ async def run(responses: list[httpx.Response], **kwargs: Any) -> tuple[Any, resp
     route = respx.post(URL).mock(side_effect=responses)
     async with httpx.AsyncClient() as http:
         inference = Inference([ChatClient(http, PROVIDER, "k")], sleep=_no_sleep)
-        result = await review(PULL, kwargs.pop("hunks", [HUNK]), [], {}, inference, **kwargs)
+        result = await review(
+            PULL,
+            kwargs.pop("hunks", [HUNK]),
+            [],
+            kwargs.pop("windows", {}),
+            inference,
+            **kwargs,
+        )
     return result, route
 
 
@@ -228,6 +235,26 @@ async def test_past_comments_reach_the_prompt_and_stop_at_the_cutoff() -> None:
     assert "[1.1] pkg/cache.py (#12) evict pops newest keys" in prompt
     assert "answer key" not in prompt
     assert result.past_shown == 1
+
+
+@respx.mock
+async def test_the_imports_of_every_changed_file_reach_the_drafting_call() -> None:
+    """The first live comment claimed a name was not imported while the same pull request
+    imported it, because the one line hunk that added the import ranked twelfth and the
+    budget stopped at five. The import block is now shown outside the ranking, so no
+    ranking decides whether the model can tell an undefined name from an imported one."""
+    head = ["from pkg.types import _CliVariadicArg", "", "def evict(cache):"]
+    _, route = await run([completion(drafted())], windows={"pkg/cache.py": head})
+    prompt = json.loads(route.calls[0].request.content)["messages"][1]["content"]
+    assert IMPORTS_HEADING in prompt
+    assert "from pkg.types import _CliVariadicArg" in prompt
+
+
+@respx.mock
+async def test_a_pull_request_touching_no_imports_adds_no_scope_section() -> None:
+    _, route = await run([completion(drafted())], windows={"pkg/cache.py": ["def evict(c):"]})
+    prompt = json.loads(route.calls[0].request.content)["messages"][1]["content"]
+    assert IMPORTS_HEADING not in prompt
 
 
 @respx.mock

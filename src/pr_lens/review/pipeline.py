@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from pr_lens.ingest.diff import Hunk
 from pr_lens.review import prompts
-from pr_lens.review.context import Block, PullRequest, Skipped, commentable, fit
+from pr_lens.review.context import Block, PullRequest, Skipped, commentable, fit, render_imports
 from pr_lens.review.provider import (
     CALL_TOKEN_BUDGET,
     Completion,
@@ -204,7 +204,9 @@ async def review(
     # Only regressions render, so this is empty unless the sandbox found a test that passes
     # at the base commit and fails at this pull request's head.
     evidence = render_verification(verification) if verification else ""
-    head = "\n\n".join(part for part in (prompts.header(pull), evidence) if part)
+    # The import block of every changed file, ahead of the hunks and outside their budget.
+    scope = render_imports(windows)
+    head = "\n\n".join(part for part in (prompts.header(pull), evidence, scope) if part)
     budget = (
         CALL_TOKEN_BUDGET
         - DRAFT_COMPLETION_TOKENS
@@ -222,9 +224,11 @@ async def review(
         return Review(
             NoComment.TOO_LARGE, skipped=skipped, dropped=dropped, verification=verification
         )
-    # fit keeps a prefix of the blocks, so the n-th shown block is the n-th candidate.
+    # fit no longer keeps a prefix of the blocks, so each shown block carries its rank.
     past_shown = sum(
-        len(past[n]) for n, (_, text) in enumerate(fitted.shown) if prompts.PAST_HEADING in text
+        len(past[position])
+        for position, (_, text) in zip(fitted.positions, fitted.shown, strict=True)
+        if prompts.PAST_HEADING in text
     )
     base = Review(
         None,

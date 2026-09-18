@@ -39,6 +39,13 @@ surrounding code outside the diff. You may only comment on a numbered row marked
 labelled like [2.1]. They show what this project's reviewers care about. Treat them as \
 hints: never copy one, and never comment only because a past comment exists.
 
+Before the hunks you are shown the import lines of each changed file at this commit. That \
+list is complete for the top of those files, so if a name appears there it IS imported and \
+in scope. Never write that a name is undefined, unimported or missing when it is in that \
+list. You are shown a few hunks of the change, not the whole file and not the whole \
+repository, so a function, class or name you cannot see usually exists. If a comment \
+depends on code you were not shown, do not write it.
+
 Answer with JSON only:
 - plan: under 60 words, what could break in this change.
 - drafts: each comment you would leave, with path; line (a number from the listing); body \

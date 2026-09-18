@@ -9,9 +9,15 @@ The listing shown to the model numbers each line by its place in the new file, b
 line comment is anchored to that number and the diff itself does not carry it. Lines the
 pull request touched or showed as context are commentable; lines of the surrounding
 window are not, since GitHub refuses a comment outside the diff, and are marked so.
+
+The import block of every changed file is shown outside the ranking and outside the hunk
+budget. The first live review claimed a name was not imported when the same pull request
+added the import, because that one added line ranked twelfth of fifteen and the budget
+stopped at five. Whether a name is in scope is not a fact the ranking should get a vote
+on, so it is not left to the ranking.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
@@ -41,6 +47,18 @@ MAX_HUNK_LINES = 80
 
 # A minified line inside an ordinary file would otherwise spend hundreds of tokens alone.
 MAX_LINE_CHARS = 200
+
+# The import block of one changed file, and of all of them together. A one line import is
+# what decides whether a "this name is not defined" comment is true, and ranking sorts it
+# near the bottom every time because it adds one line. So it is shown outside the ranking.
+# The caps are what stop a file with a hundred imports from spending the diff's budget.
+MAX_IMPORT_LINES_PER_FILE = 25
+MAX_IMPORT_LINES_TOTAL = 100
+
+IMPORTS_HEADING = (
+    "Names already in scope in the changed files at this commit. These lines are outside "
+    "the diff, so they are not commentable, and a name listed here IS imported:"
+)
 
 # Test and documentation changes are reviewable, but a hunk of code the tests exercise is
 # the likelier home for a comment worth leaving.
@@ -79,6 +97,9 @@ class Fitted:
     shown: list[tuple[Hunk, str]]
     dropped: list[Hunk]
     tokens: int
+    # Where each shown block sat in the ranking. fit no longer keeps a prefix, so a caller
+    # that has one list per candidate cannot index it by position in `shown`.
+    positions: tuple[int, ...] = ()
 
 
 async def fetch_pull(client: GitHubClient, repo: str, number: int) -> PullRequest:
@@ -202,22 +223,123 @@ def render(hunk: Hunk, file_lines: Sequence[str] | None = None) -> str:
 
 
 def fit(blocks: Sequence[Block], budget: int) -> Fitted:
-    """Greedy, in rank order: each hunk gets its richest rendering that still fits.
+    """The code first, then what enriches it. Two passes, both in rank order.
 
-    A hunk that fits in no rendering is dropped and so is everything ranked below it, since
-    showing a lower-ranked hunk in place of a higher one would invert the ranking.
+    Pass one takes every hunk in its cheapest rendering, so no hunk is lost to a higher
+    ranked hunk's window or past comments. Pass two spends what is left upgrading hunks to
+    richer renderings, best ranked first.
+
+    The earlier single greedy pass dropped a hunk that did not fit AND everything ranked
+    below it, which on pull request 16 left 2,500 tokens unspent and ten one line hunks
+    unshown, one of them the import that made the posted comment false. A hunk skipped
+    here is skipped for its own size, not for its rank, and the budget it could not use is
+    offered to the next one. Order in the prompt stays rank order either way.
     """
-    shown: list[tuple[Hunk, str]] = []
+    chosen: dict[int, str] = {}
     spent = 0
     for position, block in enumerate(blocks):
-        chosen = next(
-            (text for text in block.variants if spent + estimate_tokens(text) <= budget), None
-        )
-        if chosen is None:
-            return Fitted(shown, [b.hunk for b in blocks[position:]], spent)
-        shown.append((block.hunk, chosen))
-        spent += estimate_tokens(chosen)
-    return Fitted(shown, [], spent)
+        cheapest = block.variants[-1]
+        cost = estimate_tokens(cheapest)
+        if spent + cost <= budget:
+            chosen[position] = cheapest
+            spent += cost
+    for position, block in enumerate(blocks):
+        current = chosen.get(position)
+        if current is None:
+            continue
+        paid = estimate_tokens(current)
+        for text in block.variants:
+            if text == current:
+                break
+            cost = estimate_tokens(text)
+            if spent - paid + cost <= budget:
+                chosen[position] = text
+                spent += cost - paid
+                break
+    order = sorted(chosen)
+    return Fitted(
+        [(blocks[position].hunk, chosen[position]) for position in order],
+        [block.hunk for position, block in enumerate(blocks) if position not in chosen],
+        spent,
+        tuple(order),
+    )
+
+
+def _is_import_start(line: str) -> bool:
+    """A top level import, in the two languages the sandbox runs.
+
+    Indented lines are excluded: a local import inside a function says nothing about what
+    is in scope at module level, which is the question a NameError claim turns on.
+    """
+    if line[:1] in (" ", "\t"):
+        return False
+    stripped = line.strip()
+    if stripped.startswith(("import ", "import(", "import{", "import *", "from ")):
+        return True
+    if stripped.startswith("export ") and " from " in stripped:
+        return True
+    return stripped.startswith(("const ", "let ", "var ")) and "require(" in stripped
+
+
+def _unclosed(text: str) -> bool:
+    depth = 0
+    for character in text:
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+    return depth > 0
+
+
+def imports(file_lines: Sequence[str]) -> list[tuple[int, str]]:
+    """Top level import lines with their number in the file, continuations included.
+
+    A parenthesised import spans several lines and the names are on the continuation
+    lines, so taking only the first line would list the module and hide every name it
+    brings in, which is the opposite of the point.
+    """
+    found: list[tuple[int, str]] = []
+    number = 0
+    total = len(file_lines)
+    while number < total and len(found) < MAX_IMPORT_LINES_PER_FILE:
+        line = file_lines[number]
+        number += 1
+        if not _is_import_start(line):
+            continue
+        found.append((number, line))
+        buffered = line
+        while (_unclosed(buffered) or buffered.rstrip().endswith("\\")) and number < total:
+            if len(found) >= MAX_IMPORT_LINES_PER_FILE:
+                break
+            line = file_lines[number]
+            number += 1
+            found.append((number, line))
+            buffered += line
+    return found
+
+
+def render_imports(windows: Mapping[str, Sequence[str]]) -> str:
+    """The import block of every changed file whose head was fetched, one section each.
+
+    This is shown outside the hunk budget because it is the context that decides whether a
+    claim about an undefined name is true, and it is small: one line each, already paid
+    for by the file fetches the windows needed.
+    """
+    sections: list[str] = []
+    budget = MAX_IMPORT_LINES_TOTAL
+    for path in sorted(windows):
+        if budget <= 0:
+            break
+        found = imports(windows[path])[:budget]
+        if not found:
+            continue
+        budget -= len(found)
+        rows = [path]
+        rows.extend(_row(number, ".", text) for number, text in found)
+        sections.append("\n".join(rows))
+    if not sections:
+        return ""
+    return "\n".join([IMPORTS_HEADING, *sections])
 
 
 def commentable(hunk: Hunk) -> frozenset[int]:
