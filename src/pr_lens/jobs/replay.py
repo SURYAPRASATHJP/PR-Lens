@@ -177,14 +177,23 @@ def render(batch: str, rows: Sequence[tuple[Chosen, Review]]) -> str:
 
 
 async def run(
-    store: Store, batch: str, count: int, dsn: str, encoder: Encoder, sandbox: bool = False
+    store: Store,
+    batch: str,
+    count: int,
+    dsn: str,
+    encoder: Encoder,
+    sandbox: bool = False,
+    compare: str | None = None,
 ) -> str:
     pairs, _ = load_pairs(store, PAIRS_VERSION)
     conn = await connect(dsn)
     rows: list[tuple[Chosen, Review]] = []
     indexes: dict[str, CommentIndex] = {}
     try:
-        chosen = choose(pairs, count, batch, await reviews.replayed_elsewhere(conn, batch))
+        # With `compare`, this batch reads the pull requests that batch read, so a change
+        # to the reviewer is measured against the same inputs rather than a fresh sample.
+        excluded = await reviews.replayed_elsewhere(conn, batch, compare)
+        chosen = choose(pairs, count, compare or batch, excluded)
         logger.info("batch %s: %s pull requests chosen", batch, len(chosen))
         async with httpx.AsyncClient() as http:
             client = GitHubClient(http, mining_token() or "", HttpCache(DEFAULT_CACHE_DIR))
@@ -235,6 +244,11 @@ async def run(
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="pr-lens-replay", description=__doc__)
     parser.add_argument("--batch", required=True)
+    parser.add_argument(
+        "--compare",
+        default=None,
+        help="An earlier batch to re-read: the same pull requests, drafted again.",
+    )
     parser.add_argument("--pulls", type=int, default=DEFAULT_PULLS)
     parser.add_argument("--sink", choices=("local", "huggingface"), default="huggingface")
     parser.add_argument("--corpus-dir", default=".corpus")
@@ -257,6 +271,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             dsn,
             encoder,
             os.environ.get("PR_LENS_SANDBOX") == "1",
+            args.compare or None,
         )
     )
     sys.stdout.write(markdown)

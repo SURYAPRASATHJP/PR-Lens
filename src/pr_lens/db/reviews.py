@@ -173,14 +173,25 @@ async def silent_runs(conn: asyncpg.Connection, batch: str) -> list[asyncpg.Reco
     )
 
 
-async def replayed_elsewhere(conn: asyncpg.Connection, batch: str) -> set[tuple[str, int]]:
+async def replayed_elsewhere(
+    conn: asyncpg.Connection, batch: str, compare: str | None = None
+) -> set[tuple[str, int]]:
     """Every pull request another replay batch has drafted, so a new batch reads new ones.
 
     Not this batch's own: a re-run of a half-finished batch has to choose the same pull
     requests again, and the claim is what skips the ones already drafted.
+
+    Not `compare`'s either. Measuring a change to the reviewer means drafting the same
+    pull requests again with the new code, and the ordinary rule makes that impossible:
+    a new batch would skip every pull request the old one read, which is all of them.
+    Phase 4b is context, measure, tools, measure, verifier, and each of those measures is
+    this comparison, so the harness has to allow it.
     """
     rows = await conn.fetch(
-        "select repo, pr_number from review_runs where mode = 'replay' and batch <> $1", batch
+        "select repo, pr_number from review_runs "
+        "where mode = 'replay' and batch <> $1 and ($2::text is null or batch <> $2)",
+        batch,
+        compare,
     )
     return {(row["repo"], row["pr_number"]) for row in rows}
 

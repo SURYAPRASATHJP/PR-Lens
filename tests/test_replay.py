@@ -59,6 +59,20 @@ def test_a_batch_spreads_across_repos_and_always_means_the_same_pulls() -> None:
     }
 
 
+def test_a_comparison_batch_reads_the_batch_it_names_rather_than_a_fresh_sample() -> None:
+    """Measuring a change to the reviewer means the same pull requests through new code.
+
+    `choose` is seeded by the name it is given, so a re-measurement passes the earlier
+    batch's name as the seed while claiming rows under its own. The exclusion half of this
+    lives in db.reviews.replayed_elsewhere, which leaves the compared batch out.
+    """
+    original = [(c.repo, c.number) for c in choose(PAIRS, 6, "b1", set())]
+    again = [(c.repo, c.number) for c in choose(PAIRS, 6, "b1", set())]
+    fresh = [(c.repo, c.number) for c in choose(PAIRS, 6, "b2", set())]
+    assert again == original
+    assert fresh != original
+
+
 def test_pulls_another_batch_drafted_are_not_chosen_again() -> None:
     taken = {(c.repo, c.number) for c in choose(PAIRS, 6, "b1", set())}
     later = choose(PAIRS, 12, "b2", taken)
