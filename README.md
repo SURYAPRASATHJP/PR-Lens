@@ -7,10 +7,22 @@ teams. It reads the repository's own history for context, runs the project's tes
 in a network-isolated sandbox, and drafts a comment only when it has something
 specific to say.
 
-**Status: Phase 2.** The webhook spine, the ingest pipeline and the retrieval
-stack are built and tested. The recall table that measures retrieval has not had
-its first run on the live corpus yet, and there is no review intelligence. Do not
-install this on anything you care about.
+**Status: Phase 4.** The whole path runs: a pull request event is verified, a
+job writes its delivery row, retrieval pulls the repository's own past review
+comments, the tests run in the sandbox, two model calls draft and filter, and a
+surviving comment is posted. It has done this on a live pull request.
+
+The first comment it posted on a live pull request was wrong. It said a name was
+not imported when the same pull request imported it four lines earlier. The
+cause is not a mystery: the one line hunk that added the import ranked twelfth
+of fifteen by added lines, the prompt budget stopped at five, and the model was
+never shown it. That is fixed, and the fix is pinned by tests that fail when it
+is reverted. `PROGRESS.md` in the workspace records the run and the row it was
+diagnosed from.
+
+So: it works end to end, and its review quality is not measured yet. If you
+install it today you are helping find out what it gets wrong, which is the
+honest description of where it is. It cannot damage anything: see below.
 
 ## What it will not do
 
@@ -23,9 +35,27 @@ install this on anything you care about.
 
 ## Measured quality
 
-Acceptance rate and noise rate go here as numbers, alongside hit rate, substance
-match, silence accuracy, cost per pull request and p95 latency. They are absent
-because they have not been measured yet, not because they are flattering.
+Acceptance rate and noise rate are the headline numbers and they are not measured
+yet. They need the golden set and the evaluation harness of Phase 5. They are
+absent here because they do not exist, not because they are unflattering.
+
+What has been measured, on the live corpus, with the tables in this repository:
+
+| what | number | where |
+|---|---|---|
+| retrieval recall@10, past review comments | 0.475 | `docs/eval/phase-2-recall-table.md` |
+| sandbox runs, install and test outcomes | see table | `docs/sandbox/phase-3-runs.md` |
+
+And one hand-judged replay, which is evidence rather than a metric. Fifteen pull
+requests, thirteen drafts, two silences. Nine drafts were judged by hand: one
+worth keeping, eight worth deleting. Every one of the eight made a claim about
+code the model had not been shown, which is the same defect the first live
+comment had, and it is what the context change above addresses. The replay will
+be re-run against the fix and the numbers replaced with what it finds.
+
+The most reliable thing so far is the silence. Every pull request the model
+declined to comment on, it declined for a reason that held up on inspection. A
+reviewer that says nothing when it has nothing is the part that is working.
 
 ## How it is put together
 
