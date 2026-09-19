@@ -15,7 +15,14 @@ from pr_lens.github.cache import HttpCache
 from pr_lens.github.client import GitHubClient
 from pr_lens.ingest.mine import review_comment_unit
 from pr_lens.jobs.embed import embed_input
-from pr_lens.jobs.replay import Chosen, choose, render, replay_one, spent_the_day
+from pr_lens.jobs.replay import (
+    Chosen,
+    choose,
+    read_manifest,
+    render,
+    replay_one,
+    spent_the_day,
+)
 from pr_lens.retrieval.embed import MODELS
 from pr_lens.review.pipeline import NoComment, Review
 from pr_lens.review.provider import ChatClient, Inference, Provider
@@ -71,6 +78,27 @@ def test_a_comparison_batch_reads_the_batch_it_names_rather_than_a_fresh_sample(
     fresh = [(c.repo, c.number) for c in choose(PAIRS, 6, "b2", set())]
     assert again == original
     assert fresh != original
+    # The third measurement in a series seeds from the first batch, not the one before it,
+    # which is why run() passes compare[0] rather than the whole list to choose.
+    third = [(c.repo, c.number) for c in choose(PAIRS, 6, "b1", set())]
+    assert third == original
+
+
+def test_a_replay_branch_describes_its_own_run(tmp_path: Path) -> None:
+    """The workflow passes only the batch name, so without this the only way to vary a run
+    is a form in the Actions tab and what was asked for is nowhere near the result."""
+    (tmp_path / "replay.json").write_text('{"compare": "2026-09-16-a", "tools": true}')
+    assert read_manifest(tmp_path) == {"compare": "2026-09-16-a", "tools": True}
+
+
+def test_a_missing_or_broken_manifest_is_an_ordinary_run_not_a_failure(tmp_path: Path) -> None:
+    """A batch that cannot be read is worse than a batch that runs with the defaults, and
+    every replay branch before today carries no manifest at all."""
+    assert read_manifest(tmp_path) == {}
+    (tmp_path / "replay.json").write_text("{not json")
+    assert read_manifest(tmp_path) == {}
+    (tmp_path / "replay.json").write_text("[1, 2]")
+    assert read_manifest(tmp_path) == {}
 
 
 def test_pulls_another_batch_drafted_are_not_chosen_again() -> None:

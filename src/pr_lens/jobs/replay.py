@@ -19,6 +19,7 @@ any earlier batch drafted are not chosen again.
 import argparse
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import sys
@@ -26,6 +27,8 @@ import time
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -205,7 +208,7 @@ async def run(
     dsn: str,
     encoder: Encoder,
     sandbox: bool = False,
-    compare: str | None = None,
+    compare: Sequence[str] = (),
     tools: bool = False,
 ) -> str:
     pairs, _ = load_pairs(store, PAIRS_VERSION)
@@ -216,7 +219,7 @@ async def run(
         # With `compare`, this batch reads the pull requests that batch read, so a change
         # to the reviewer is measured against the same inputs rather than a fresh sample.
         excluded = await reviews.replayed_elsewhere(conn, batch, compare)
-        chosen = choose(pairs, count, compare or batch, excluded)
+        chosen = choose(pairs, count, compare[0] if compare else batch, excluded)
         logger.info("batch %s: %s pull requests chosen", batch, len(chosen))
         async with httpx.AsyncClient() as http:
             client = GitHubClient(http, mining_token() or "", HttpCache(DEFAULT_CACHE_DIR))
@@ -264,13 +267,38 @@ async def run(
     return render(batch, rows)
 
 
+# A replay branch describes the run it wants, beside the code that will run it. The
+# workflow starts from a push to replay/<batch> and passes only the batch name, so without
+# this the only way to vary a run is a form in the Actions tab, and what was asked for is
+# then nowhere in git next to the result. A manifest is also the thing a reader of the
+# eval tables needs six months later.
+MANIFEST = "replay.json"
+
+
+def read_manifest(root: Path = Path(".")) -> dict[str, Any]:
+    """The replay branch's own description of this run, or nothing if it carries none."""
+    path = root / MANIFEST
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        logger.warning("%s could not be read, ignoring it: %s", MANIFEST, error)
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="pr-lens-replay", description=__doc__)
     parser.add_argument("--batch", required=True)
     parser.add_argument(
         "--compare",
         default=None,
-        help="An earlier batch to re-read: the same pull requests, drafted again.",
+        help=(
+            "Earlier batches to re-read, comma separated. The first names the pull "
+            "requests; all of them are left out of the exclusion so they can be claimed "
+            "again. A measurement is often the third in a series, not the second."
+        ),
     )
     parser.add_argument("--pulls", type=int, default=DEFAULT_PULLS)
     parser.add_argument("--sink", choices=("local", "huggingface"), default="huggingface")
@@ -281,6 +309,27 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     configure(os.environ.get("LOG_LEVEL", "INFO"))
     args = parse_args(argv)
+    manifest = read_manifest()
+    # An explicit flag wins, then the environment, then the branch's own manifest. The
+    # order matters: a person running this by hand is overriding the branch on purpose.
+    compare = [
+        name.strip()
+        for name in (args.compare or os.environ.get("COMPARE") or manifest.get("compare") or "")
+        .replace(",", " ")
+        .split()
+    ]
+    tools = (
+        os.environ.get("PR_LENS_TOOLS") == "1"
+        if os.environ.get("PR_LENS_TOOLS")
+        else bool(manifest.get("tools"))
+    )
+    sandbox = (
+        os.environ.get("PR_LENS_SANDBOX") == "1"
+        if os.environ.get("PR_LENS_SANDBOX")
+        else bool(manifest.get("sandbox"))
+    )
+    if compare or tools or sandbox:
+        logger.info("batch %s: compare=%s tools=%s sandbox=%s", args.batch, compare, tools, sandbox)
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         logger.error("DATABASE_URL is not set")
@@ -293,9 +342,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.pulls,
             dsn,
             encoder,
-            os.environ.get("PR_LENS_SANDBOX") == "1",
-            args.compare or None,
-            os.environ.get("PR_LENS_TOOLS") == "1",
+            sandbox,
+            compare,
+            tools,
         )
     )
     sys.stdout.write(markdown)
