@@ -16,6 +16,16 @@ on:
       batch:
         description: Batch name. Re-running a batch carries on where it stopped.
         required: true
+      compare:
+        description: >-
+          Earlier batches to re-read, comma separated. The same pull requests are drafted
+          again, so a change to the reviewer is measured against the same inputs. Empty
+          for a fresh sample. A replay branch can say this in replay.json instead.
+        default: ""
+      tools:
+        description: Let the drafting call look things up before it answers
+        type: boolean
+        default: false
       pulls:
         description: Pull requests to draft
         default: "15"
@@ -78,5 +88,9 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           PULLS: ${{ inputs.pulls || '15' }}
+          COMPARE: ${{ inputs.compare || '' }}
           PR_LENS_SANDBOX: ${{ inputs.sandbox && '1' || '' }}
-        run: uv run --no-dev python -m pr_lens.jobs.replay --batch "${BATCH#replay/}" --pulls "$PULLS"
+          PR_LENS_TOOLS: ${{ inputs.tools && '1' || '' }}
+        run: |
+          uv run --no-dev python -m pr_lens.jobs.replay \
+            --batch "${BATCH#replay/}" --pulls "$PULLS"
