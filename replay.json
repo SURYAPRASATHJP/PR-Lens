@@ -1,0 +1,5 @@
+{
+  "compare": "2026-09-16-a",
+  "tools": false,
+  "why": "The same fifteen pull requests batch a was judged on, through the fixed context assembly and nothing else. Batch b measured the fix on a fresh sample, which cannot separate the change from the sample. This can."
+}
