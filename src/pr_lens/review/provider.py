@@ -22,7 +22,7 @@ import math
 import os
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -91,6 +91,15 @@ class Usage:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolCall:
+    """One tool the model asked for, as the provider named it."""
+
+    id: str
+    name: str
+    arguments: str
+
+
+@dataclass(frozen=True, slots=True)
 class Completion:
     provider: str
     model: str
@@ -98,6 +107,11 @@ class Completion:
     finish_reason: str | None
     usage: Usage
     seconds: float
+    tool_calls: tuple[ToolCall, ...] = ()
+    # The assistant message exactly as the provider sent it. A tool calling loop has to
+    # send it back unchanged in the next turn, and rebuilding it from the fields above
+    # loses whatever the provider added, which is how a loop starts arguing with itself.
+    message: Mapping[str, Any] = field(default_factory=dict)
 
 
 class RateLimited(Exception):
@@ -143,10 +157,11 @@ class ChatClient:
 
     async def complete(
         self,
-        messages: Sequence[Mapping[str, str]],
+        messages: Sequence[Mapping[str, Any]],
         *,
         max_tokens: int,
         schema: Mapping[str, Any] | None = None,
+        tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> Completion:
         body: dict[str, Any] = {
             "model": self.model,
@@ -154,6 +169,9 @@ class ChatClient:
             "max_tokens": max_tokens,
             "temperature": 0,
         }
+        if tools:
+            body["tools"] = list(tools)
+            body["tool_choice"] = "auto"
         if schema is not None:
             body["response_format"] = {
                 "type": "json_schema",
@@ -184,13 +202,16 @@ class ChatClient:
         except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
             raise ProviderError(f"{self.name} returned an unreadable body") from exc
         usage = payload.get("usage") or {}
+        message = choice.get("message") or {}
         return Completion(
             provider=self.name,
             model=str(payload.get("model", self.model)),
-            content=(choice.get("message") or {}).get("content") or "",
+            content=message.get("content") or "",
             finish_reason=choice.get("finish_reason"),
             usage=Usage(int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))),
             seconds=seconds,
+            tool_calls=_tool_calls(message),
+            message=message,
         )
 
 
@@ -214,10 +235,11 @@ class Inference:
 
     async def complete(
         self,
-        messages: Sequence[Mapping[str, str]],
+        messages: Sequence[Mapping[str, Any]],
         *,
         max_tokens: int,
         schema: Mapping[str, Any] | None = None,
+        tools: Sequence[Mapping[str, Any]] | None = None,
     ) -> Completion:
         failures: list[str] = []
         every_failure_was_a_rate_limit = True
@@ -225,7 +247,9 @@ class Inference:
             waits = 0
             while True:
                 try:
-                    return await client.complete(messages, max_tokens=max_tokens, schema=schema)
+                    return await client.complete(
+                        messages, max_tokens=max_tokens, schema=schema, tools=tools
+                    )
                 except RateLimited as limited:
                     wait = limited.retry_after
                     if (
@@ -265,6 +289,30 @@ def configured(
 
 def from_env(client: httpx.AsyncClient, environ: Mapping[str, str] = os.environ) -> Inference:
     return Inference(configured(client, environ))
+
+
+def _tool_calls(message: Mapping[str, Any]) -> tuple[ToolCall, ...]:
+    """The tool calls in an assistant message, skipping anything malformed.
+
+    A provider that sends a call with no name or no id is not answerable, and inventing an
+    id to reply to would put the conversation out of step with what the provider thinks it
+    asked. Dropping it costs one turn; the loop's cap covers the rest.
+    """
+    raw = message.get("tool_calls")
+    if not isinstance(raw, list):
+        return ()
+    calls: list[ToolCall] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        function = entry.get("function")
+        function = function if isinstance(function, dict) else {}
+        name, call_id = function.get("name"), entry.get("id")
+        if not isinstance(name, str) or not name or not isinstance(call_id, str) or not call_id:
+            continue
+        arguments = function.get("arguments")
+        calls.append(ToolCall(call_id, name, arguments if isinstance(arguments, str) else "{}"))
+    return tuple(calls)
 
 
 def _retry_after(response: httpx.Response) -> float | None:

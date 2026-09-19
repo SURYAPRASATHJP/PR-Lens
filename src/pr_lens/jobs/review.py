@@ -38,6 +38,7 @@ from pr_lens.review.post import post
 from pr_lens.review.provider import from_env
 from pr_lens.review.retrieve import CommentIndex, load_index
 from pr_lens.review.seeded import seed_source
+from pr_lens.review.tools import Toolbox
 from pr_lens.review.verify import verify
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,21 @@ async def run(raw_payload: str, dsn: str, token: str) -> str:
             index = load_comment_index(seed[0] if seed else repo)
             timings["index"] = time.monotonic() - started
 
+            # Tools behind a flag, like the sandbox. They change the cost per pull
+            # request from about 12K tokens to something the first batch has to measure,
+            # so turning them on is a decision, not a default.
+            toolbox = None
+            if os.environ.get("PR_LENS_TOOLS") == "1":
+                toolbox = Toolbox(
+                    client,
+                    repo,
+                    pull.head_sha,
+                    changed=list(dict.fromkeys(hunk.path for hunk in hunks)),
+                    cached={path: list(lines) for path, lines in windows.items()},
+                    index=index,
+                    past_before=seed[1] if seed else number,
+                )
+
             verification = None
             if os.environ.get("PR_LENS_SANDBOX") == "1":
                 started = time.monotonic()
@@ -129,6 +145,7 @@ async def run(raw_payload: str, dsn: str, token: str) -> str:
                 past_before=seed[1] if seed else number,
                 existing=existing,
                 verification=verification,
+                toolbox=toolbox,
             )
             timings["review"] = time.monotonic() - started
             await reviews.finish(conn, run_id, result, timings, head_sha=pull.head_sha)

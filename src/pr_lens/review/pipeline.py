@@ -24,6 +24,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -38,6 +39,7 @@ from pr_lens.review.provider import (
     estimate_tokens,
 )
 from pr_lens.review.retrieve import CommentIndex, PastComment
+from pr_lens.review.tools import SCHEMAS, Grounding, Toolbox
 from pr_lens.review.verify import Verification
 from pr_lens.review.verify import render as render_verification
 
@@ -57,6 +59,22 @@ MAX_CANDIDATE_HUNKS = 8
 # needs. provider_check reports the real completion sizes.
 DRAFT_COMPLETION_TOKENS = 2000
 FILTER_COMPLETION_TOKENS = 1000
+
+# Turns of tool calling before the answer is asked for, when a toolbox is given. A loop
+# re-sends its whole conversation every turn, so cost grows with the square of this. Four
+# is room to read a file, grep for a definition and check the history, which is what the
+# eight kills in batch a needed, and not room to wander.
+MAX_TOOL_TURNS = 4
+TOOL_TURN_TOKENS = 700
+
+# The conversation must still fit one call. Once it is this large the next turn would be
+# refused outright by the per-minute window, so the loop stops and asks for the answer
+# rather than losing the whole review to a 413 at turn four.
+TOOL_CONVERSATION_CEILING = CALL_TOKEN_BUDGET - DRAFT_COMPLETION_TOKENS - TOOL_TURN_TOKENS
+
+# Room kept back from the hunk budget for what the tools will add. Without it the diff
+# fills the call and the first tool result is what breaks the ceiling.
+TOOL_RESERVE_TOKENS = 1200
 
 
 class NoComment(StrEnum):
@@ -155,6 +173,7 @@ class Review:
     skipped: list[Skipped] = field(default_factory=list)
     past_shown: int = 0
     verification: Verification | None = None
+    grounding: Grounding = field(default_factory=Grounding)
 
     @property
     def kept(self) -> list[DraftItem]:
@@ -185,6 +204,7 @@ async def review(
     past_before: int | None = None,
     existing: frozenset[tuple[str, int]] = frozenset(),
     verification: Verification | None = None,
+    toolbox: Toolbox | None = None,
 ) -> Review:
     """Draft, gate and filter. `past_before` is the retrieval cutoff, the pull request's own
     number unless a seeded replay says otherwise; `existing` is every (path, line) already
@@ -201,6 +221,8 @@ async def review(
         past = index.search([hunk.text for hunk in candidates], before=before)
 
     system = prompts.DRAFT_SYSTEM.format(cap=MAX_COMMENTS_PER_PR)
+    if toolbox is not None:
+        system = f"{system}\n\n{prompts.TOOL_SYSTEM}"
     # Only regressions render, so this is empty unless the sandbox found a test that passes
     # at the base commit and fails at this pull request's head.
     evidence = render_verification(verification) if verification else ""
@@ -212,6 +234,7 @@ async def review(
         - DRAFT_COMPLETION_TOKENS
         - estimate_tokens(system)
         - estimate_tokens(head)
+        - (TOOL_RESERVE_TOKENS if toolbox is not None else 0)
     )
     blocks = [
         Block(hunk, prompts.block_variants(n, hunk, windows.get(hunk.path), past[n - 1]))
@@ -240,16 +263,23 @@ async def review(
     )
 
     user = "\n\n".join([head, *(text for _, text in fitted.shown)])
+    messages: list[Mapping[str, Any]] = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    calls: list[Call] = []
     try:
+        if toolbox is not None:
+            calls += await _look_things_up(messages, inference, toolbox)
         drafted = await inference.complete(
-            [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            max_tokens=DRAFT_COMPLETION_TOKENS,
-            schema=prompts.DRAFT_SCHEMA,
+            messages, max_tokens=DRAFT_COMPLETION_TOKENS, schema=prompts.DRAFT_SCHEMA
         )
     except InferenceUnavailable as unavailable:
         reason = NoComment.RATE_LIMITED if unavailable.rate_limited else NoComment.UNAVAILABLE
-        return replace(base, no_comment=reason, detail=str(unavailable))
-    calls = [Call.of("draft", drafted)]
+        return replace(base, no_comment=reason, calls=calls, detail=str(unavailable))
+    if toolbox is not None:
+        base = replace(base, grounding=Grounding(len(calls), tuple(toolbox.used)))
+    calls.append(Call.of("draft", drafted))
     answer = _parse(DraftAnswer, drafted)
     if answer is None:
         logger.warning("unparseable draft answer: %r", drafted.content[:300])
@@ -313,6 +343,43 @@ async def review(
         drafts=drafts,
         calls=calls,
     )
+
+
+async def _look_things_up(
+    messages: list[Mapping[str, Any]], inference: Inference, toolbox: Toolbox
+) -> list[Call]:
+    """Let the model check what it was about to assume, then ask for the answer.
+
+    Appends to `messages` in place: each assistant turn exactly as the provider sent it,
+    then one tool message per call it made. The assistant turn is sent back unchanged
+    because a rebuilt one loses whatever the provider put in it, which is how a loop starts
+    arguing with itself.
+
+    Stops on the first turn that calls nothing, on MAX_TOOL_TURNS, or when the conversation
+    has grown to where the next turn would be refused by the per-minute window. In all
+    three cases the caller then asks for the JSON answer, so a loop that ran out of room
+    still produces a review rather than losing one.
+    """
+    calls: list[Call] = []
+    for turn in range(MAX_TOOL_TURNS):
+        if estimate_tokens(json.dumps(messages)) > TOOL_CONVERSATION_CEILING:
+            logger.info("tool loop stopped at turn %s: no room left in the call", turn)
+            break
+        completion = await inference.complete(messages, max_tokens=TOOL_TURN_TOKENS, tools=SCHEMAS)
+        calls.append(Call.of(f"tools.{turn}", completion))
+        if not completion.tool_calls:
+            break
+        messages.append(completion.message)
+        for asked in completion.tool_calls:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": asked.id,
+                    "content": await toolbox.call(asked.name, asked.arguments),
+                }
+            )
+    messages.append({"role": "user", "content": prompts.ANSWER_NOW})
+    return calls
 
 
 def _gate(

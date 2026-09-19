@@ -45,6 +45,7 @@ from pr_lens.review.context import fetch_changes, fetch_pull, fetch_windows
 from pr_lens.review.pipeline import MAX_CANDIDATE_HUNKS, NoComment, Review, review
 from pr_lens.review.provider import Inference, from_env
 from pr_lens.review.retrieve import CommentIndex, load_index
+from pr_lens.review.tools import Toolbox
 from pr_lens.review.verify import verify
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ async def replay_one(
     index: CommentIndex,
     inference: Inference,
     sandbox: bool = False,
+    tools: bool = False,
 ) -> tuple[Review, str, dict[str, float]]:
     """One pull request through the same pipeline live review uses. Returns the review, the
     head sha it was made at, and the seconds each stage took."""
@@ -136,6 +138,18 @@ async def replay_one(
         verification = await verify(chosen.repo, pull.base_sha, pull.head_sha, hunks)
         timings["verify"] = time.monotonic() - started
 
+    toolbox = None
+    if tools:
+        toolbox = Toolbox(
+            client,
+            chosen.repo,
+            pull.head_sha,
+            changed=list(dict.fromkeys(hunk.path for hunk in hunks)),
+            cached={path: list(lines) for path, lines in windows.items()},
+            index=index,
+            past_before=chosen.number,
+        )
+
     started = time.monotonic()
     result = await review(
         pull,
@@ -146,6 +160,7 @@ async def replay_one(
         index=index,
         past_before=chosen.number,
         verification=verification,
+        toolbox=toolbox,
     )
     timings["review"] = time.monotonic() - started
     return result, pull.head_sha, timings
@@ -160,19 +175,26 @@ def render(batch: str, rows: Sequence[tuple[Chosen, Review]]) -> str:
     lines = [
         f"## Replay batch `{batch}`",
         "",
-        "| pull request | outcome | drafts | kept | tokens | hunks shown | past comments |",
-        "|---|---|---|---|---|---|---|",
+        "| pull request | outcome | drafts | kept | tokens | hunks shown | past comments "
+        "| tool turns | looked up |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for chosen, result in rows:
         tokens = sum(call.prompt_tokens + call.completion_tokens for call in result.calls)
         outcome = result.no_comment.value if result.no_comment else "commented"
         lines.append(
             f"| {chosen.repo}#{chosen.number} | {outcome} | {len(result.drafts)} | "
-            f"{len(result.kept)} | {tokens} | {len(result.shown)} | {result.past_shown} |"
+            f"{len(result.kept)} | {tokens} | {len(result.shown)} | {result.past_shown} | "
+            f"{result.grounding.turns} | {result.grounding.answered} |"
         )
     kept = sum(len(result.kept) for _, result in rows)
     silent = sum(1 for _, result in rows if result.no_comment)
-    lines += ["", f"{len(rows)} pull requests, {kept} comments kept, {silent} silent."]
+    looked_up = sum(result.grounding.answered for _, result in rows)
+    lines += [
+        "",
+        f"{len(rows)} pull requests, {kept} comments kept, {silent} silent, "
+        f"{looked_up} tool results.",
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -184,6 +206,7 @@ async def run(
     encoder: Encoder,
     sandbox: bool = False,
     compare: str | None = None,
+    tools: bool = False,
 ) -> str:
     pairs, _ = load_pairs(store, PAIRS_VERSION)
     conn = await connect(dsn)
@@ -223,7 +246,7 @@ async def run(
                         time.monotonic() - started,
                     )
                 result, head_sha, timings = await replay_one(
-                    client, pick, indexes[pick.repo], inference, sandbox
+                    client, pick, indexes[pick.repo], inference, sandbox, tools
                 )
                 if spent_the_day(result):
                     # Every pull request after this one would come back the same way and
@@ -272,6 +295,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             encoder,
             os.environ.get("PR_LENS_SANDBOX") == "1",
             args.compare or None,
+            os.environ.get("PR_LENS_TOOLS") == "1",
         )
     )
     sys.stdout.write(markdown)

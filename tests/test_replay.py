@@ -219,4 +219,4 @@ def test_the_summary_counts_outcomes() -> None:
     table = render("b", rows)
     assert "| o/r#1 | model_silent |" in table
     assert "| o/r#2 | commented |" in table
-    assert "2 pull requests, 0 comments kept, 1 silent." in table
+    assert "2 pull requests, 0 comments kept, 1 silent, 0 tool results." in table
