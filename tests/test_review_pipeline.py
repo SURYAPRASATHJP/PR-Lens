@@ -12,6 +12,7 @@ from pr_lens.retrieval.embed import MODELS
 from pr_lens.review import prompts
 from pr_lens.review.context import IMPORTS_HEADING, PullRequest, Skipped
 from pr_lens.review.pipeline import (
+    MAX_CANDIDATE_HUNKS,
     MAX_COMMENTS_PER_PR,
     DraftAnswer,
     DraftItem,
@@ -277,6 +278,19 @@ async def test_a_sandbox_with_nothing_to_report_adds_nothing_to_the_prompt() -> 
     prompt = json.loads(route.calls[0].request.content)["messages"][1]["content"]
     assert "install_failed" not in prompt
     assert "were run at the base commit" not in prompt
+
+
+@respx.mock
+async def test_a_hunk_the_ranking_never_reached_is_not_counted_as_one_the_budget_lost() -> None:
+    """The two losses want opposite fixes. A hunk the budget could not fit asks for a
+    cheaper rendering; a hunk past MAX_CANDIDATE_HUNKS asks for a higher ceiling. Batch
+    2026-09-18-b read as 18.6 dropped hunks on average, one pull request at 192, because
+    one column was counting both."""
+    many = [parse_patch(PATCH, f"pkg/mod{n}.py")[0] for n in range(MAX_CANDIDATE_HUNKS + 5)]
+    result, _ = await run([completion(drafted())], hunks=many)
+    assert len(result.shown) == MAX_CANDIDATE_HUNKS
+    assert result.dropped == []
+    assert len(result.unconsidered) == 5
 
 
 @respx.mock

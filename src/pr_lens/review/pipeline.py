@@ -170,6 +170,9 @@ class Review:
     calls: list[Call] = field(default_factory=list)
     shown: list[Hunk] = field(default_factory=list)
     dropped: list[Hunk] = field(default_factory=list)
+    # Ranked past MAX_CANDIDATE_HUNKS, so never costed against the budget at all. A big
+    # pull request has hundreds of these and none of them is an assembly failure.
+    unconsidered: list[Hunk] = field(default_factory=list)
     skipped: list[Skipped] = field(default_factory=list)
     past_shown: int = 0
     verification: Verification | None = None
@@ -241,11 +244,22 @@ async def review(
         for n, hunk in enumerate(candidates, start=1)
     ]
     fitted = fit(blocks, budget)
-    dropped = fitted.dropped + list(hunks[MAX_CANDIDATE_HUNKS:])
+    # Two different losses, kept apart. `dropped` is what the budget could not fit and is
+    # the assembler's own number; `unconsidered` is what ranked past the candidate ceiling
+    # and was never costed at all. Batch 2026-09-18-b averaged 18.6 "dropped" hunks and
+    # one pull request reported 192, which is not a budget failure, it is MAX_CANDIDATE_HUNKS.
+    # Added together they say the assembler is losing almost everything, which is false and
+    # points at the wrong fix.
+    unconsidered = list(hunks[MAX_CANDIDATE_HUNKS:])
+    dropped = fitted.dropped
     shown = [hunk for hunk, _ in fitted.shown]
     if not shown:
         return Review(
-            NoComment.TOO_LARGE, skipped=skipped, dropped=dropped, verification=verification
+            NoComment.TOO_LARGE,
+            skipped=skipped,
+            dropped=dropped,
+            unconsidered=unconsidered,
+            verification=verification,
         )
     # fit no longer keeps a prefix of the blocks, so each shown block carries its rank.
     past_shown = sum(
@@ -257,6 +271,7 @@ async def review(
         None,
         shown=shown,
         dropped=dropped,
+        unconsidered=unconsidered,
         skipped=skipped,
         past_shown=past_shown,
         verification=verification,

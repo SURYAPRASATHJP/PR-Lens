@@ -36,7 +36,8 @@ update review_runs set
     head_sha = coalesce(nullif($15, ''), head_sha),
     verification = $16::jsonb,
     tool_turns = $17,
-    tools_used = $18
+    tools_used = $18,
+    hunks_unconsidered = $19
 where run_id = $1
 """
 
@@ -113,6 +114,7 @@ async def finish(
             json.dumps(_verification(review)),
             review.grounding.turns or None,
             review.grounding.summary or None,
+            len(review.unconsidered),
         )
         await conn.executemany(
             _DRAFT,
