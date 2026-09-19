@@ -24,8 +24,34 @@ create table if not exists schema_migrations (
 """
 
 
+class SchemaBehind(RuntimeError):
+    """Migrations shipped with this code have not been applied to this database."""
+
+
 def pending(applied: set[str]) -> list[Path]:
     return sorted(p for p in MIGRATIONS_DIR.glob("*.sql") if p.stem not in applied)
+
+
+async def assert_current(conn: asyncpg.Connection) -> None:
+    """Refuse to start a job whose schema is older than its code.
+
+    Batch 2026-09-19-a-context spent a pull request's worth of inference and then died on
+    `column "tool_turns" does not exist`, because migrations 0005 and 0006 shipped with the
+    code and migrate.yml is run by hand. The first draft was paid for and thrown away, and
+    the run row it left behind had to be released before the batch could be started again.
+
+    A misconfigured job fails loudly here rather than going quiet. Silence is for a
+    provider that said no, never for a deployment that was never finished.
+    """
+    try:
+        rows = await conn.fetch("select version from schema_migrations")
+    except asyncpg.UndefinedTableError as missing:
+        raise SchemaBehind("this database has never been migrated") from missing
+    missing_versions = [path.stem for path in pending({row["version"] for row in rows})]
+    if missing_versions:
+        raise SchemaBehind(
+            f"not applied: {', '.join(missing_versions)}. Run the migrate workflow first."
+        )
 
 
 async def migrate(dsn: str) -> list[str]:

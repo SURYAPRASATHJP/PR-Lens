@@ -24,6 +24,7 @@ import httpx
 from pr_lens.corpus.writer import repo_slug
 from pr_lens.db import reviews
 from pr_lens.db.connection import connect
+from pr_lens.db.migrate import assert_current
 from pr_lens.eval.split import HoldoutViolation
 from pr_lens.eval.store import build_store
 from pr_lens.github.cache import HttpCache
@@ -92,6 +93,7 @@ async def run(raw_payload: str, dsn: str, token: str) -> str:
         seed = seed_source(repo, pull.head_ref)
         conn = await connect(dsn)
         try:
+            await assert_current(conn)
             run_id = await reviews.claim(
                 conn,
                 mode="live",

@@ -34,6 +34,7 @@ import httpx
 
 from pr_lens.db import reviews
 from pr_lens.db.connection import connect
+from pr_lens.db.migrate import assert_current
 from pr_lens.eval.pairs import ReviewPair
 from pr_lens.eval.split import require_tune
 from pr_lens.eval.store import Store, build_store
@@ -213,6 +214,7 @@ async def run(
 ) -> str:
     pairs, _ = load_pairs(store, PAIRS_VERSION)
     conn = await connect(dsn)
+    await assert_current(conn)
     rows: list[tuple[Chosen, Review]] = []
     indexes: dict[str, CommentIndex] = {}
     try:
