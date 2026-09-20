@@ -1,0 +1,5 @@
+{
+  "compare": "2026-09-16-a,2026-09-19-a-context",
+  "tools": true,
+  "why": "Spec step 3. The same fifteen pull requests batch a was judged on, with the drafting call able to look things up. The context-only run removed five of batch a's eight known-bad drafts and the one known-good one with them; the three bad drafts that survived are all claims about code outside the diff, which is exactly what read_file and grep exist to settle. If noise does not drop here, the tools are not the fix and step 4 should not be built."
+}
