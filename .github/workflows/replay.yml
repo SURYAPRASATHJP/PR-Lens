@@ -85,8 +85,14 @@ jobs:
           GH_MINING_TOKEN: ${{ secrets.GH_MINING_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_MODEL: ${{ vars.GROQ_MODEL }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          # Branch local, never merged. Step 3 is a comparability question: batch a was
+          # drafted entirely on gpt-oss-120b, so a fallback that changed the reviewer
+          # partway would buy throughput and spend the only baseline there is. configured()
+          # skips a provider whose key is empty, so this pins the batch to Groq however the
+          # secrets are set. This batch takes as many token windows as it needs instead.
+          # Remove for step 5 and for live review, where throughput is the point.
+          OPENROUTER_API_KEY: ""
+          NVIDIA_API_KEY: ""
           PULLS: ${{ inputs.pulls || '15' }}
           COMPARE: ${{ inputs.compare || '' }}
           PR_LENS_SANDBOX: ${{ inputs.sandbox && '1' || '' }}
