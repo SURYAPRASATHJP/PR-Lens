@@ -1,0 +1,5 @@
+{
+  "compare": "2026-09-16-a,2026-09-19-a-context",
+  "tools": true,
+  "why": "Spec step 3, fired whole with the failover live for the first time. Groq's six pull requests plus OpenRouter and NIM on nemotron should carry the fifteen in one window. Judged by model and never pooled: batch a was entirely gpt-oss-120b, so rows drafted by nemotron have no baseline and cannot be read as a change in noise."
+}
