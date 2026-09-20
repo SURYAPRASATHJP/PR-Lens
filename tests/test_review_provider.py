@@ -13,6 +13,7 @@ from pr_lens.review.provider import (
     NotConfigured,
     Provider,
     ProviderError,
+    configured,
     estimate_tokens,
     from_env,
 )
@@ -159,6 +160,44 @@ async def test_no_key_at_all_fails_loudly_rather_than_going_quiet() -> None:
     async with httpx.AsyncClient() as client:
         with pytest.raises(NotConfigured, match="GROQ_API_KEY"):
             from_env(client, {})
+
+
+@respx.mock
+async def test_a_key_pasted_with_a_line_break_still_builds_a_header() -> None:
+    """The failure this prevents is not a bad request, it is a provider that vanishes.
+    httpx raises LocalProtocolError while building the header, before anything is sent, so
+    failover never sees a failure to fail over from. Both fallback secrets reached Actions
+    this way on 2026-09-21 and read as unconfigured."""
+    route = respx.post(f"{PROVIDERS[0].base_url}/chat/completions").mock(return_value=ok())
+    async with httpx.AsyncClient() as client:
+        clients = configured(client, {PROVIDERS[0].key_env: "secret-key\n"})
+        await clients[0].complete(MESSAGES, max_tokens=10)
+    assert route.calls[0].request.headers["Authorization"] == "Bearer secret-key"
+
+
+@respx.mock
+async def test_a_key_padded_with_spaces_still_builds_a_header() -> None:
+    route = respx.post(f"{PROVIDERS[0].base_url}/chat/completions").mock(return_value=ok())
+    async with httpx.AsyncClient() as client:
+        clients = configured(client, {PROVIDERS[0].key_env: "  secret-key  "})
+        await clients[0].complete(MESSAGES, max_tokens=10)
+    assert route.calls[0].request.headers["Authorization"] == "Bearer secret-key"
+
+
+async def test_a_model_override_pasted_with_a_newline_is_stripped() -> None:
+    async with httpx.AsyncClient() as client:
+        clients = configured(
+            client, {PROVIDERS[0].key_env: "k", PROVIDERS[0].model_env: "groq/compound\n"}
+        )
+    assert clients[0].model == "groq/compound"
+
+
+async def test_a_key_that_is_only_whitespace_is_unset_not_an_empty_bearer() -> None:
+    """An empty Bearer token is a 401 on every call. A provider that was never configured
+    is both the truth and the more useful thing to report."""
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(NotConfigured):
+            configured(client, {PROVIDERS[0].key_env: "   \n"})
 
 
 def test_both_fallbacks_carry_the_same_model() -> None:

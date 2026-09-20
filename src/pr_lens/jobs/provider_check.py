@@ -187,9 +187,9 @@ def clients_to_probe(
     clients = configured(http, environ)
     asked = {(client.name, client.model) for client in clients}
     return clients + [
-        ChatClient(http, provider, environ[provider.key_env], model)
+        ChatClient(http, provider, environ[provider.key_env].strip(), model)
         for provider in PROVIDERS
-        if environ.get(provider.key_env)
+        if environ.get(provider.key_env, "").strip()
         for model in ALSO_PROBE.get(provider.name, ())
         if (provider.name, model) not in asked
     ]

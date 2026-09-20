@@ -289,11 +289,28 @@ def configured(
     client: httpx.AsyncClient, environ: Mapping[str, str] = os.environ
 ) -> list[ChatClient]:
     """Every provider whose key is set, in PROVIDERS order. A model override per provider,
-    such as GROQ_MODEL=groq/compound, is how the provider check's answer gets applied."""
+    such as GROQ_MODEL=groq/compound, is how the provider check's answer gets applied.
+
+    Both values are stripped. A secret pasted with a trailing newline is the most common
+    mistake there is, and httpx refuses to build a header from one: the provider does not
+    fail over, it raises before the request and reads as a provider that does not exist.
+    That cost a measurement on 2026-09-21, when both fallback keys reached Actions with a
+    line break. Whitespace is never part of a key or a model id, so stripping loses nothing.
+
+    A key that is only whitespace is treated as unset rather than passed on, because an
+    empty Bearer token is a 401 on every call and a provider that was never configured is
+    the more useful thing to report.
+    """
+    keys = {provider.name: environ.get(provider.key_env, "").strip() for provider in PROVIDERS}
     clients = [
-        ChatClient(client, provider, environ[provider.key_env], environ.get(provider.model_env))
+        ChatClient(
+            client,
+            provider,
+            keys[provider.name],
+            environ.get(provider.model_env, "").strip() or None,
+        )
         for provider in PROVIDERS
-        if environ.get(provider.key_env)
+        if keys[provider.name]
     ]
     if not clients:
         names = ", ".join(provider.key_env for provider in PROVIDERS)
