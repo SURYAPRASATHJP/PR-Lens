@@ -1,0 +1,59 @@
+name: assembly
+
+# The assembly table over the tune set's review pairs: where each human comment ended up
+# once the pipeline's own rank, candidate ceiling and fit have run.
+#
+# No inference and no database, so this holds neither a model key nor DATABASE_URL and
+# costs none of the day's tokens. It can run while the drafting budget is spent, which is
+# the whole reason it exists as its own job rather than a step inside replay.
+on:
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: Repositories to measure, space separated. Empty means the tune split.
+        default: ""
+      pulls_per_repo:
+        description: Cap per repo for a quick look. 0 measures every pull request.
+        default: "0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assembly
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    # Every pull request carrying a pair, each a handful of cached GitHub reads plus the
+    # encoder for its repo's index.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen --no-dev --group ingest --group retrieval
+
+      # The model weights only, named. Never the whole hub cache, which also holds the
+      # private corpus shards this job downloads, and caches on a public repo can be
+      # restored by pull request workflows.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub/models--Alibaba-NLP--gte-modernbert-base
+          key: hf-models-gte-${{ hashFiles('src/pr_lens/retrieval/embed.py') }}
+
+      - name: Measure the assembly
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GH_MINING_TOKEN: ${{ secrets.GH_MINING_TOKEN }}
+          REPOS: ${{ inputs.repos }}
+          PULLS_PER_REPO: ${{ inputs.pulls_per_repo || '0' }}
+        run: |
+          uv run --no-dev python -m pr_lens.jobs.assembly \
+            --pulls-per-repo "$PULLS_PER_REPO" ${REPOS:+--repos $REPOS}
