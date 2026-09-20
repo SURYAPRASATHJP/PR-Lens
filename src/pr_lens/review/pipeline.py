@@ -67,14 +67,18 @@ FILTER_COMPLETION_TOKENS = 1000
 MAX_TOOL_TURNS = 4
 TOOL_TURN_TOKENS = 700
 
-# The conversation must still fit one call. Once it is this large the next turn would be
-# refused outright by the per-minute window, so the loop stops and asks for the answer
-# rather than losing the whole review to a 413 at turn four.
+# The research conversation must still fit one call. Once it is this large the next turn
+# would be refused outright by the per-minute window, so the loop stops with what it has.
 TOOL_CONVERSATION_CEILING = CALL_TOKEN_BUDGET - DRAFT_COMPLETION_TOKENS - TOOL_TURN_TOKENS
 
-# Room kept back from the hunk budget for what the tools will add. Without it the diff
-# fills the call and the first tool result is what breaks the ceiling.
-TOOL_RESERVE_TOKENS = 1200
+# Room kept back from the hunk budget for the findings block. The drafting call carries a
+# summary of what the tools returned, not the conversation that produced it, so this is
+# the size of the summary rather than of the loop.
+TOOL_RESERVE_TOKENS = 700
+
+# The findings block handed to the drafting call. One tool result is a window or a handful
+# of matching lines, so this holds several and cuts the rest.
+MAX_FINDINGS_CHARS = 2000
 
 
 class NoComment(StrEnum):
@@ -278,22 +282,32 @@ async def review(
     )
 
     user = "\n\n".join([head, *(text for _, text in fitted.shown)])
-    messages: list[Mapping[str, Any]] = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ]
     calls: list[Call] = []
+    findings = ""
     try:
         if toolbox is not None:
-            calls += await _look_things_up(messages, inference, toolbox)
+            research = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ]
+            calls, findings = await _look_things_up(research, inference, toolbox)
+            # Recorded before the drafting call, not after. The first version set it
+            # afterwards, so the runs that failed were exactly the runs with no record of
+            # what the loop had done, which is when it matters most.
+            base = replace(base, grounding=Grounding(len(calls), tuple(toolbox.used)))
+        # The drafting call is the ordinary one. It never carries the tool instructions or
+        # the `tools` parameter, only what the research found, as text.
         drafted = await inference.complete(
-            messages, max_tokens=DRAFT_COMPLETION_TOKENS, schema=prompts.DRAFT_SCHEMA
+            [
+                {"role": "system", "content": prompts.DRAFT_SYSTEM.format(cap=MAX_COMMENTS_PER_PR)},
+                {"role": "user", "content": "\n\n".join(part for part in (user, findings) if part)},
+            ],
+            max_tokens=DRAFT_COMPLETION_TOKENS,
+            schema=prompts.DRAFT_SCHEMA,
         )
     except InferenceUnavailable as unavailable:
         reason = NoComment.RATE_LIMITED if unavailable.rate_limited else NoComment.UNAVAILABLE
         return replace(base, no_comment=reason, calls=calls, detail=str(unavailable))
-    if toolbox is not None:
-        base = replace(base, grounding=Grounding(len(calls), tuple(toolbox.used)))
     calls.append(Call.of("draft", drafted))
     answer = _parse(DraftAnswer, drafted)
     if answer is None:
@@ -360,41 +374,59 @@ async def review(
     )
 
 
-async def _look_things_up(
-    messages: list[Mapping[str, Any]], inference: Inference, toolbox: Toolbox
-) -> list[Call]:
-    """Let the model check what it was about to assume, then ask for the answer.
+def _conversation_tokens(messages: Sequence[Mapping[str, Any]]) -> int:
+    """What the provider will count, near enough.
 
-    Appends to `messages` in place: each assistant turn exactly as the provider sent it,
-    then one tool message per call it made. The assistant turn is sent back unchanged
-    because a rebuilt one loses whatever the provider put in it, which is how a loop starts
-    arguing with itself.
+    Not `estimate_tokens(json.dumps(messages))`, which is what the first version did. JSON
+    escapes every newline into two characters, so a conversation carrying a diff reads
+    about forty percent larger than it is and the ceiling trips before the first turn.
+    encode/httpx#3371 got zero turns that way and the run still recorded as a tools run.
+    """
+    return sum(
+        estimate_tokens(str(message.get("content") or "")) for message in messages
+    ) + 4 * len(messages)
+
+
+async def _look_things_up(
+    messages: Sequence[Mapping[str, Any]], inference: Inference, toolbox: Toolbox
+) -> tuple[list[Call], str]:
+    """A research phase, separate from drafting. Returns its calls and what it found.
+
+    The conversation here is the model's own: assistant turns exactly as the provider sent
+    them, then one tool message per call. It is NOT what the drafting call is then given.
+    The first version replayed this whole conversation into the drafting call with the tool
+    instructions still in the system prompt and no `tools` in the request, and Groq refused
+    the lot: "Tool choice is none, but model called a tool", a 400 that loses the entire
+    review. Three of seven pull requests died that way on 20 Sep before the batch was
+    stopped. The model is not wrong to try; it was told it had tools and then offered none.
+
+    So the loop's output is a findings block, plain text, and the drafting call is the
+    ordinary one with that block added. Nothing downstream mentions a tool, so there is
+    nothing for the model to reach for and nothing for the provider to reject. It is also
+    cheaper, because the drafting call no longer re-sends the research.
 
     Stops on the first turn that calls nothing, on MAX_TOOL_TURNS, or when the conversation
-    has grown to where the next turn would be refused by the per-minute window. In all
-    three cases the caller then asks for the JSON answer, so a loop that ran out of room
-    still produces a review rather than losing one.
+    has grown past what one call can carry.
     """
+    conversation = list(messages)
     calls: list[Call] = []
+    findings: list[str] = []
     for turn in range(MAX_TOOL_TURNS):
-        if estimate_tokens(json.dumps(messages)) > TOOL_CONVERSATION_CEILING:
+        if _conversation_tokens(conversation) > TOOL_CONVERSATION_CEILING:
             logger.info("tool loop stopped at turn %s: no room left in the call", turn)
             break
-        completion = await inference.complete(messages, max_tokens=TOOL_TURN_TOKENS, tools=SCHEMAS)
+        completion = await inference.complete(
+            conversation, max_tokens=TOOL_TURN_TOKENS, tools=SCHEMAS
+        )
         calls.append(Call.of(f"tools.{turn}", completion))
         if not completion.tool_calls:
             break
-        messages.append(completion.message)
+        conversation.append(completion.message)
         for asked in completion.tool_calls:
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": asked.id,
-                    "content": await toolbox.call(asked.name, asked.arguments),
-                }
-            )
-    messages.append({"role": "user", "content": prompts.ANSWER_NOW})
-    return calls
+            answer = await toolbox.call(asked.name, asked.arguments)
+            conversation.append({"role": "tool", "tool_call_id": asked.id, "content": answer})
+            findings.append(answer)
+    return calls, prompts.findings(findings, MAX_FINDINGS_CHARS)
 
 
 def _gate(
