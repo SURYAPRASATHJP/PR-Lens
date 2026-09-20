@@ -1,0 +1,5 @@
+{
+  "compare": "2026-09-16-a,2026-09-19-a-context",
+  "tools": true,
+  "why": "Spec step 3, third attempt. Two provider 400s killed the earlier ones: the drafting call still carried tool instructions while sending no tools, and a misspelled tool argument was rejected server side. Both are fixed and a refused tool turn now stops the research rather than the review. Read this by grounding and tools_used, not by noise alone: noise falling because the model went quiet again is not the tools working."
+}
