@@ -90,6 +90,17 @@ def build(git_dir: Path, source: Source, base_tree: Path, head_tree: Path) -> tu
         work_tree=base_tree,
     )
     _git(git_dir, "checkout", "--quiet", "-b", head, work_tree=base_tree)
+    # Empty the index before staging the other tree. `add --all` trusts the index's stat
+    # cache, and that cache was filled from base_tree: same relative paths, a different
+    # directory. A file the pull request modified without changing its size, staged while
+    # its mtime still matches the cached one, is read as unchanged and never staged, so
+    # the seeded pull request quietly does not contain it.
+    #
+    # Found 20 Sep 2026 as a test that failed about one run in twelve. `cli.py` goes from
+    # "a = 1\n" to "a = 2\n", six bytes either way, and git dropped it. A seeded pull
+    # request missing one of its changed files is a gate run measuring the wrong diff, and
+    # nothing downstream could have told.
+    _git(git_dir, "read-tree", "--empty")
     _git(git_dir, "add", "--all", work_tree=head_tree)
     _git(
         git_dir,

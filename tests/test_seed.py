@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -49,6 +50,13 @@ def test_two_commits_carry_exactly_the_reviewed_diff_and_none_of_github(tmp_path
         tmp_path / "head",
         {"LICENSE": "MIT", "cli.py": "a = 2\n", "new.py": "y\n", ".github/dependabot.yml": ""},
     )
+    # Force the race rather than wait for it. cli.py is six bytes in both trees, so with
+    # one matching mtime git's stat cache calls it unchanged and never stages it. Left to
+    # chance this failed about one run in twelve, which is a test that trains you to
+    # ignore it.
+    same = 1_700_000_000
+    for tree_root in (base, head):
+        os.utime(tree_root / "cli.py", (same, same))
     base_branch, head_branch = build(tmp_path / "seed.git", SOURCE, base, head)
 
     changed = git(tmp_path / "seed.git", "diff", "--name-status", base_branch, head_branch)
