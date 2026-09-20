@@ -67,9 +67,18 @@ FILTER_COMPLETION_TOKENS = 1000
 MAX_TOOL_TURNS = 4
 TOOL_TURN_TOKENS = 700
 
-# The research conversation must still fit one call. Once it is this large the next turn
-# would be refused outright by the per-minute window, so the loop stops with what it has.
-TOOL_CONVERSATION_CEILING = CALL_TOKEN_BUDGET - DRAFT_COMPLETION_TOKENS - TOOL_TURN_TOKENS
+# The research conversation must fit one call with room for that turn's answer. A tool
+# turn's completion is TOOL_TURN_TOKENS, not the drafting call's, because since the
+# research phase was split out they are two separate calls and the drafting call's budget
+# has nothing to do with the size of the conversation here.
+#
+# Subtracting DRAFT_COMPLETION_TOKENS as well, which is what the split left behind, made
+# the ceiling 4,300 while a full prompt is exactly 4,300: the hunk budget is
+# CALL_TOKEN_BUDGET - DRAFT_COMPLETION_TOKENS - system - head - TOOL_RESERVE_TOKENS, so
+# system plus user comes to the same number. Every real review tripped the ceiling before
+# its first turn and recorded as a tools run that looked nothing up. Two pull requests on
+# 2026-09-20-c-tools did exactly that before the batch was stopped.
+TOOL_CONVERSATION_CEILING = CALL_TOKEN_BUDGET - TOOL_TURN_TOKENS
 
 # Room kept back from the hunk budget for the findings block. The drafting call carries a
 # summary of what the tools returned, not the conversation that produced it, so this is

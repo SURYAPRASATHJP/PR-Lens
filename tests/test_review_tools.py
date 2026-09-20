@@ -18,8 +18,22 @@ from pr_lens.github.client import GitHubClient
 from pr_lens.ingest.diff import parse_patch
 from pr_lens.review import prompts
 from pr_lens.review.context import PullRequest
-from pr_lens.review.pipeline import MAX_TOOL_TURNS, NoComment, _conversation_tokens, review
-from pr_lens.review.provider import ChatClient, Inference, Provider, estimate_tokens
+from pr_lens.review.pipeline import (
+    DRAFT_COMPLETION_TOKENS,
+    MAX_TOOL_TURNS,
+    TOOL_CONVERSATION_CEILING,
+    TOOL_RESERVE_TOKENS,
+    NoComment,
+    _conversation_tokens,
+    review,
+)
+from pr_lens.review.provider import (
+    CALL_TOKEN_BUDGET,
+    ChatClient,
+    Inference,
+    Provider,
+    estimate_tokens,
+)
 from pr_lens.review.tools import (
     FENCE,
     MAX_GREP_MATCHES,
@@ -344,6 +358,41 @@ async def test_what_the_loop_did_survives_a_provider_that_says_no(tmp_path: Path
     assert result.no_comment is NoComment.UNAVAILABLE
     assert result.grounding.turns == 2
     assert result.grounding.answered == 1
+
+
+def test_a_full_sized_prompt_still_leaves_room_for_a_tool_turn() -> None:
+    """The arithmetic, not a small fixture, because a small fixture never reaches the limit.
+
+    The hunk budget is CALL_TOKEN_BUDGET - DRAFT_COMPLETION_TOKENS - system - head -
+    TOOL_RESERVE_TOKENS, so the largest research conversation is the first three of those
+    subtractions. The ceiling has to be above it or the loop never starts, which is what
+    two pull requests on 2026-09-20-c-tools recorded: a tools run that looked nothing up.
+    """
+    largest = CALL_TOKEN_BUDGET - DRAFT_COMPLETION_TOKENS - TOOL_RESERVE_TOKENS
+    assert largest < TOOL_CONVERSATION_CEILING
+
+
+@respx.mock
+async def test_the_loop_runs_on_a_prompt_the_size_of_a_real_review(tmp_path: Path) -> None:
+    box = await toolbox(tmp_path)
+    big = parse_patch(
+        "@@ -1,2 +1,60 @@ def evict(cache):\n"
+        + "".join(f"+    row_{n} = {n}\n" for n in range(58)),
+        "pkg/cache.py",
+    )[0]
+    route = respx.post(URL).mock(
+        side_effect=[
+            completion(tool_calls=asked("grep", pattern="NotFound", path="")),
+            completion("checked"),
+            completion(drafted()),
+        ]
+    )
+    async with httpx.AsyncClient() as http:
+        inference = Inference([ChatClient(http, PROVIDER, "k")], sleep=_no_sleep)
+        result = await review(PULL, [big], [], {}, inference, toolbox=box)
+    assert result.grounding.turns == 2
+    assert result.grounding.answered == 1
+    assert route.call_count == 3
 
 
 @respx.mock
