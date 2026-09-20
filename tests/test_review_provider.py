@@ -161,6 +161,16 @@ async def test_no_key_at_all_fails_loudly_rather_than_going_quiet() -> None:
             from_env(client, {})
 
 
+def test_both_fallbacks_carry_the_same_model() -> None:
+    """A failover already changes provider mid-batch. A second model would change the
+    reviewer again on the same run, and then a drop in noise cannot be told from a change
+    of reviewer. Measured 2026-09-21: the previous ids were dead on both fallbacks, 404 on
+    OpenRouter and 410 on NIM, so the failover had never once worked."""
+    openrouter, nim = PROVIDERS[1], PROVIDERS[2]
+    assert openrouter.model.removesuffix(":free") == nim.model
+    assert "nemotron" in nim.model
+
+
 def test_the_estimate_rounds_up() -> None:
     assert estimate_tokens("") == 0
     assert estimate_tokens("abcd") == 2

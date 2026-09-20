@@ -68,15 +68,29 @@ class Provider:
 # In failover order. Groq is the base. OpenRouter's free models are 50 requests a day, and
 # its 429s do not correlate with Groq's. NIM's 1,000 credits are a pool that never renews,
 # so it is last: a reserve for when both of the others are spent.
+#
+# Both fallbacks carry nemotron rather than gpt-oss-120b, measured 2026-09-21. The old ids
+# were dead and the failover had therefore never worked: OpenRouter serves no free
+# gpt-oss-120b at all, 404, and NIM retired it on 2026-09-03, 410 Gone. Both nemotron ids
+# honour the strict schema and call read_file with exact arguments in about a second.
+#
+# The same model sits on both fallbacks on purpose. A failover already changes provider
+# mid-batch, and a second model would change the reviewer again on the same run, so a
+# drop in noise could not be told from a change of reviewer.
 PROVIDERS: tuple[Provider, ...] = (
     Provider("groq", "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "GROQ_API_KEY"),
     Provider(
         "openrouter",
         "https://openrouter.ai/api/v1",
-        "openai/gpt-oss-120b:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
         "OPENROUTER_API_KEY",
     ),
-    Provider("nim", "https://integrate.api.nvidia.com/v1", "openai/gpt-oss-120b", "NVIDIA_API_KEY"),
+    Provider(
+        "nim",
+        "https://integrate.api.nvidia.com/v1",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "NVIDIA_API_KEY",
+    ),
 )
 
 
