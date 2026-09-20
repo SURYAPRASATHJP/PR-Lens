@@ -415,9 +415,16 @@ async def _look_things_up(
         if _conversation_tokens(conversation) > TOOL_CONVERSATION_CEILING:
             logger.info("tool loop stopped at turn %s: no room left in the call", turn)
             break
-        completion = await inference.complete(
-            conversation, max_tokens=TOOL_TURN_TOKENS, tools=SCHEMAS
-        )
+        try:
+            completion = await inference.complete(
+                conversation, max_tokens=TOOL_TURN_TOKENS, tools=SCHEMAS
+            )
+        except InferenceUnavailable as unavailable:
+            # Research is enrichment. Failing to enrich is not failing to review, so this
+            # stops looking things up and drafts with whatever it already has. pypa/hatch#624
+            # lost an entire review to a provider 400 over a misspelled tool argument.
+            logger.info("tool loop stopped at turn %s: %s", turn, unavailable)
+            break
         calls.append(Call.of(f"tools.{turn}", completion))
         if not completion.tool_calls:
             break

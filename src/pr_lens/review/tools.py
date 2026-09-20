@@ -13,11 +13,20 @@ stack the pipeline already runs as a fixed prelude, offered as something the age
 to do instead. What is new is that the answer arrives with its source attached, so a draft
 that rests on nothing is countable rather than a matter of trust.
 
-Three rules hold here and each is a test.
+Four rules hold here and each is a test.
 
 A tool that fails is silence for that claim, never a guess in its place. Every failure
 comes back as a sentence saying what could not be read, in the same shape as a success, so
 the model is never handed a plausible blank.
+
+A malformed call is one of those failures, and it is validated here rather than by the
+provider. The schemas are deliberately permissive: no required list and no
+additionalProperties false. Groq validates tool arguments server side and answers a
+mismatch with a 400 that loses the whole review, which is what happened to pypa/hatch#624
+when the model wrote line_start where the schema said start_line. A strict schema turns a
+misspelled argument into a lost pull request; a loose one turns it into one sentence the
+model can read and correct. The model also has a clear prior for line_start, so both
+spellings are accepted rather than argued with.
 
 Results are trimmed hard. `read_file` returns a window, never a file; `grep` returns
 matching lines with their numbers, never the surrounding code. An agent loop re-sends its
@@ -82,8 +91,6 @@ SCHEMAS: tuple[dict[str, Any], ...] = (
                     "start_line": {"type": "integer", "description": "First line, 1 based."},
                     "end_line": {"type": "integer", "description": "Last line, inclusive."},
                 },
-                "required": ["path", "start_line", "end_line"],
-                "additionalProperties": False,
             },
         },
     },
@@ -102,8 +109,6 @@ SCHEMAS: tuple[dict[str, Any], ...] = (
                     "pattern": {"type": "string", "description": "Text or a regular expression."},
                     "path": {"type": "string", "description": "One file, or empty for all."},
                 },
-                "required": ["pattern", "path"],
-                "additionalProperties": False,
             },
         },
     },
@@ -121,8 +126,6 @@ SCHEMAS: tuple[dict[str, Any], ...] = (
                 "properties": {
                     "query": {"type": "string", "description": "Code or a description of it."},
                 },
-                "required": ["query"],
-                "additionalProperties": False,
             },
         },
     },
@@ -214,8 +217,10 @@ class Toolbox:
         path = str(parsed.get("path") or "")
         if not path:
             return self._failed("read_file", arguments, "no path was given")
-        start = _as_int(parsed.get("start_line"), 1)
-        end = _as_int(parsed.get("end_line"), start + MAX_READ_LINES - 1)
+        # Both spellings. The model reaches for line_start often enough that arguing with
+        # it costs a turn every time and reading it costs nothing.
+        start = _as_int(_either(parsed, "start_line", "line_start"), 1)
+        end = _as_int(_either(parsed, "end_line", "line_end"), start + MAX_READ_LINES - 1)
         lines = await self._lines(path)
         if not lines:
             return self._failed("read_file", arguments, f"{path} is empty at this commit")
@@ -304,6 +309,13 @@ class Grounding:
             f"{entry.name}({entry.detail})" if entry.ok else f"{entry.name} failed"
             for entry in self.used
         )
+
+
+def _either(parsed: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if parsed.get(name) is not None:
+            return parsed[name]
+    return None
 
 
 def _as_int(value: Any, fallback: int) -> int:

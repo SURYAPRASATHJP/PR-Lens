@@ -94,10 +94,55 @@ def test_every_schema_is_one_the_dispatcher_answers() -> None:
     """A schema the dispatcher has no branch for is a tool the model will call and get
     'there is no tool by that name' from, every time, for the life of the deployment."""
     assert {schema["function"]["name"] for schema in SCHEMAS} == set(NAMES)
+
+
+def test_no_schema_lets_the_provider_reject_a_malformed_call() -> None:
+    """pypa/hatch#624 lost its whole review to a 400 because the model wrote line_start
+    where the schema said start_line. Groq validates tool arguments server side, so a
+    strict schema turns a misspelled argument into a lost pull request. Argument shape is
+    the dispatcher's business, where it is one sentence the model can read and correct."""
     for schema in SCHEMAS:
         parameters = schema["function"]["parameters"]
-        assert set(parameters["required"]) == set(parameters["properties"])
-        assert parameters["additionalProperties"] is False
+        assert "required" not in parameters
+        assert parameters.get("additionalProperties") is not False
+
+
+@respx.mock
+async def test_read_file_reads_the_spelling_the_model_actually_uses(tmp_path: Path) -> None:
+    box = await toolbox(tmp_path)
+    both = json.dumps({"path": "pkg/cache.py", "line_start": 1, "line_end": 2})
+    answer = await box.call("read_file", both)
+    assert "lines 1 to 2" in answer
+    assert box.used[-1].ok
+
+
+@respx.mock
+async def test_a_call_missing_its_arguments_is_a_sentence_not_a_failure(tmp_path: Path) -> None:
+    box = await toolbox(tmp_path)
+    answer = await box.call("read_file", json.dumps({"path": "pkg/cache.py"}))
+    assert "lines 1 to" in answer
+    assert (await box.call("grep", json.dumps({}))).count("could not answer") == 1
+
+
+@respx.mock
+async def test_a_provider_that_refuses_a_tool_turn_still_produces_a_review(
+    tmp_path: Path,
+) -> None:
+    """Research is enrichment. Failing to enrich is not failing to review, and the first
+    version lost the whole pull request to a 400 over one misspelled argument."""
+    box = await toolbox(tmp_path)
+    route = respx.post(URL).mock(
+        side_effect=[
+            httpx.Response(400, json={"error": {"message": "Tool call validation failed"}}),
+            completion(drafted()),
+        ]
+    )
+    async with httpx.AsyncClient() as http:
+        inference = Inference([ChatClient(http, PROVIDER, "k")], sleep=_no_sleep)
+        result = await review(PULL, [HUNK], [], {}, inference, toolbox=box)
+    assert result.no_comment is NoComment.MODEL_SILENT
+    assert route.call_count == 2
+    assert result.grounding.turns == 0
 
 
 @respx.mock
