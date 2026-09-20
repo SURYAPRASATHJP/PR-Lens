@@ -4,7 +4,16 @@ Each case differs from the shown baseline in one way, so a failure names the cla
 broke rather than the metric in general.
 """
 
-from pr_lens.eval.assembly import HEADER, Assembly, Gold, Outcome, classify, summarise
+from pr_lens.eval.assembly import (
+    HEADER,
+    Assembly,
+    Gold,
+    Outcome,
+    classify,
+    commented_line,
+    rank_of,
+    summarise,
+)
 from pr_lens.ingest.diff import Hunk
 from pr_lens.review.context import Fitted, Skipped, commentable
 
@@ -122,3 +131,50 @@ def test_the_row_matches_the_header_width() -> None:
     row = Assembly(shown=2, dropped=1, skipped=1, not_in_diff=1).row()
     assert row.count("|") == HEADER.splitlines()[0].count("|")
     assert "0.500" in row
+
+
+def test_a_gold_past_the_candidate_ceiling_is_unconsidered_not_not_in_diff() -> None:
+    """The distinction the whole measurement turns on. Folded into NOT_IN_DIFF it reads as
+    "the human commented outside the diff", which excludes it from the rate and says the
+    assembler lost nothing. It is a loss, and the fix is the ceiling, not the budget."""
+    fitted = Fitted(shown=[(hunk(new_start=10), "rendered")], dropped=[], tokens=10)
+    beyond = [hunk(path="z.py", new_start=500)]
+    assert classify(Gold("z.py", 501), fitted, (), beyond) is Outcome.UNCONSIDERED
+    assert classify(Gold("z.py", 501), fitted) is Outcome.NOT_IN_DIFF
+
+
+def test_unconsidered_counts_as_reachable_because_a_higher_ceiling_would_reach_it() -> None:
+    stats = summarise([Outcome.SHOWN, Outcome.UNCONSIDERED])
+    assert stats.reachable == 2
+    assert stats.retention == 0.5
+
+
+def test_shown_beats_unconsidered_when_the_same_file_appears_twice() -> None:
+    fitted = Fitted(shown=[(hunk(new_start=10), "rendered")], dropped=[], tokens=10)
+    beyond = [hunk(new_start=50)]
+    assert classify(Gold("a.py", 11), fitted, (), beyond) is Outcome.SHOWN
+    assert classify(Gold("a.py", 51), fitted, (), beyond) is Outcome.UNCONSIDERED
+
+
+def test_rank_counts_from_one_and_is_none_when_no_hunk_holds_the_line() -> None:
+    ranked = [hunk(path="a.py", new_start=10), hunk(path="b.py", new_start=20)]
+    assert rank_of(Gold("a.py", 11), ranked) == 1
+    assert rank_of(Gold("b.py", 21), ranked) == 2
+    assert rank_of(Gold("c.py", 1), ranked) is None
+
+
+def test_the_commented_line_is_the_last_line_of_the_diff_hunk() -> None:
+    """GitHub truncates diff_hunk so it ends at the commented line, which is why the line
+    can be recovered from the frozen query set without re-mining it."""
+    diff_hunk = "@@ -1,3 +1,4 @@\n context\n-gone\n+added one\n+added two"
+    assert commented_line(diff_hunk, "a.py") == 3
+
+
+def test_a_removed_last_line_does_not_become_the_commented_line() -> None:
+    """A removed line carries no new-file number, so it cannot be what GitHub anchored to."""
+    diff_hunk = "@@ -1,3 +1,2 @@\n context\n+added\n-gone"
+    assert commented_line(diff_hunk, "a.py") == 2
+
+
+def test_an_unparseable_diff_hunk_has_no_gold_line() -> None:
+    assert commented_line("not a diff at all", "a.py") is None

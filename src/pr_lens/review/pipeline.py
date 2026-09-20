@@ -54,6 +54,40 @@ MAX_COMMENTS_PER_PR = 3
 # considered costs a retrieval query and possibly a file fetch.
 MAX_CANDIDATE_HUNKS = 8
 
+
+def draft_frame(
+    pull: "PullRequest",
+    windows: Mapping[str, Sequence[str]],
+    *,
+    verification: "Verification | None" = None,
+    tools: object = None,
+) -> tuple[str, str, int]:
+    """The system prompt, the head block, and the tokens left for hunks after both.
+
+    One definition because two callers need it to agree. `review` assembles a prompt with
+    it; `eval/assembly.py` measures which hunks that assembly keeps, and a budget computed
+    twice is a budget that drifts, which would make the measurement quietly describe a
+    pipeline that does not exist.
+    """
+    system = prompts.DRAFT_SYSTEM.format(cap=MAX_COMMENTS_PER_PR)
+    if tools is not None:
+        system = f"{system}\n\n{prompts.TOOL_SYSTEM}"
+    # Only regressions render, so this is empty unless the sandbox found a test that passes
+    # at the base commit and fails at this pull request's head.
+    evidence = render_verification(verification) if verification else ""
+    # The import block of every changed file, ahead of the hunks and outside their budget.
+    scope = render_imports(windows)
+    head = "\n\n".join(part for part in (prompts.header(pull), evidence, scope) if part)
+    budget = (
+        CALL_TOKEN_BUDGET
+        - DRAFT_COMPLETION_TOKENS
+        - estimate_tokens(system)
+        - estimate_tokens(head)
+        - (TOOL_RESERVE_TOKENS if tools is not None else 0)
+    )
+    return system, head, budget
+
+
 # Completion room inside the per-call budget. gpt-oss reasons before it answers, and the
 # reasoning counts against max_tokens, so the drafting call gets far more than its JSON
 # needs. provider_check reports the real completion sizes.
@@ -236,22 +270,7 @@ async def review(
         before = past_before if past_before is not None else pull.number
         past = index.search([hunk.text for hunk in candidates], before=before)
 
-    system = prompts.DRAFT_SYSTEM.format(cap=MAX_COMMENTS_PER_PR)
-    if toolbox is not None:
-        system = f"{system}\n\n{prompts.TOOL_SYSTEM}"
-    # Only regressions render, so this is empty unless the sandbox found a test that passes
-    # at the base commit and fails at this pull request's head.
-    evidence = render_verification(verification) if verification else ""
-    # The import block of every changed file, ahead of the hunks and outside their budget.
-    scope = render_imports(windows)
-    head = "\n\n".join(part for part in (prompts.header(pull), evidence, scope) if part)
-    budget = (
-        CALL_TOKEN_BUDGET
-        - DRAFT_COMPLETION_TOKENS
-        - estimate_tokens(system)
-        - estimate_tokens(head)
-        - (TOOL_RESERVE_TOKENS if toolbox is not None else 0)
-    )
+    system, head, budget = draft_frame(pull, windows, verification=verification, tools=toolbox)
     blocks = [
         Block(hunk, prompts.block_variants(n, hunk, windows.get(hunk.path), past[n - 1]))
         for n, hunk in enumerate(candidates, start=1)

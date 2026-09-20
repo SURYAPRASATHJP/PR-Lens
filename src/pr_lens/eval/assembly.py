@@ -12,6 +12,10 @@ So every outcome is named, because the fix differs by outcome:
     SHOWN         the gold line was in a hunk that reached the prompt. The ceiling held.
     DROPPED       the hunk existed and ranked too low for the budget. Raise the budget,
                   change the ranking, or show a cheaper rendering.
+    UNCONSIDERED  the hunk existed and ranked past MAX_CANDIDATE_HUNKS, so it was never
+                  costed against the budget at all. Raise the ceiling, or rank better.
+                  Batch 2026-09-18-b lost 263 hunks this way against 16 to the budget, so
+                  folding the two together would point at the wrong fix.
     SKIPPED       the file was excluded before ranking, as a lockfile, vendored or
                   generated. Change skip_reason, not the budget.
     NOT_IN_DIFF   no hunk of this pull request contains that line. Not an assembly loss:
@@ -26,13 +30,14 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
-from pr_lens.ingest.diff import Hunk
+from pr_lens.ingest.diff import Hunk, parse_diff_hunk
 from pr_lens.review.context import Fitted, Skipped, commentable
 
 
 class Outcome(StrEnum):
     SHOWN = "shown"
     DROPPED = "dropped"
+    UNCONSIDERED = "unconsidered"
     SKIPPED = "skipped"
     NOT_IN_DIFF = "not_in_diff"
 
@@ -55,15 +60,47 @@ def _contains(hunk: Hunk, gold: Gold) -> bool:
     return hunk.path == gold.path and gold.line in commentable(hunk)
 
 
-def classify(gold: Gold, fitted: Fitted, skipped: Sequence[Skipped] = ()) -> Outcome:
+def classify(
+    gold: Gold,
+    fitted: Fitted,
+    skipped: Sequence[Skipped] = (),
+    unconsidered: Sequence[Hunk] = (),
+) -> Outcome:
     """Where one gold comment ended up. Checked in the order the pipeline decides."""
     if any(_contains(hunk, gold) for hunk, _ in fitted.shown):
         return Outcome.SHOWN
     if any(_contains(hunk, gold) for hunk in fitted.dropped):
         return Outcome.DROPPED
+    if any(_contains(hunk, gold) for hunk in unconsidered):
+        return Outcome.UNCONSIDERED
     if any(entry.path == gold.path for entry in skipped):
         return Outcome.SKIPPED
     return Outcome.NOT_IN_DIFF
+
+
+def rank_of(gold: Gold, ranked: Sequence[Hunk]) -> int | None:
+    """Where the gold hunk sits in the ranking, counting from one, or None if no hunk holds
+    it. This is the number MAX_CANDIDATE_HUNKS is a cut through, so the distribution of it
+    is what says whether raising the ceiling would reach anything."""
+    for position, hunk in enumerate(ranked, start=1):
+        if _contains(hunk, gold):
+            return position
+    return None
+
+
+def commented_line(diff_hunk: str, path: str) -> int | None:
+    """The new-file line a review comment was left on.
+
+    GitHub truncates a comment's diff_hunk so that it ends at the commented line, so the
+    last line that exists in the new file is the one the human pointed at. Derived rather
+    than stored because the frozen query set predates this measurement and re-mining it to
+    add one field would change its digest and invalidate the recall table.
+    """
+    hunk = parse_diff_hunk(diff_hunk, path)
+    if hunk is None:
+        return None
+    lines = hunk.new_file_lines()
+    return lines[-1][0] if lines else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,11 +111,12 @@ class Assembly:
     dropped: int
     skipped: int
     not_in_diff: int
+    unconsidered: int = 0
 
     @property
     def reachable(self) -> int:
         """Queries whose gold was in the diff at all, so the assembler could have shown it."""
-        return self.shown + self.dropped + self.skipped
+        return self.shown + self.dropped + self.skipped + self.unconsidered
 
     @property
     def retention(self) -> float:
@@ -94,16 +132,30 @@ class Assembly:
     def total(self) -> int:
         return self.reachable + self.not_in_diff
 
-    def row(self) -> str:
-        return (
-            f"| {self.retention:.3f} | {self.shown} | {self.dropped} | "
-            f"{self.skipped} | {self.not_in_diff} | {self.total} |"
-        )
+    def row(self, label: str = "") -> str:
+        cells = [
+            f"{self.retention:.3f}",
+            self.shown,
+            self.dropped,
+            self.unconsidered,
+            self.skipped,
+            self.not_in_diff,
+            self.total,
+        ]
+        body = " | ".join(str(cell) for cell in cells)
+        return f"| {label} | {body} |" if label else f"| {body} |"
 
 
-HEADER = (
-    "| retention | shown | dropped | skipped | not in diff | queries |\n|---|---|---|---|---|---|"
-)
+COLUMNS = ("retention", "shown", "dropped", "unconsidered", "skipped", "not in diff", "queries")
+
+HEADER = "| " + " | ".join(COLUMNS) + " |\n|" + "---|" * len(COLUMNS)
+
+
+def header(label: str = "") -> str:
+    """The table header, optionally with a leading label column for a per-repo breakdown."""
+    if not label:
+        return HEADER
+    return "| " + " | ".join((label, *COLUMNS)) + " |\n|" + "---|" * (len(COLUMNS) + 1)
 
 
 def summarise(outcomes: Iterable[Outcome]) -> Assembly:
@@ -115,4 +167,5 @@ def summarise(outcomes: Iterable[Outcome]) -> Assembly:
         dropped=counts[Outcome.DROPPED],
         skipped=counts[Outcome.SKIPPED],
         not_in_diff=counts[Outcome.NOT_IN_DIFF],
+        unconsidered=counts[Outcome.UNCONSIDERED],
     )
