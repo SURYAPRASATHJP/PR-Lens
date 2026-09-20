@@ -1,0 +1,5 @@
+{
+  "compare": "2026-09-16-a,2026-09-19-a-context",
+  "tools": true,
+  "why": "Spec step 3, second attempt. The first died on a Groq 400, \"Tool choice is none, but model called a tool\", on three of seven pull requests: the drafting call kept the tool instructions in its system prompt while sending no tools. The loop is now a research phase whose output is a findings block, and the drafting call carries neither. Read the result by grounding and tools_used, not by noise alone: noise falling because the model went quiet again is not the tools working."
+}
